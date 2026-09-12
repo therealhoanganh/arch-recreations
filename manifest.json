@@ -1,0 +1,10 @@
+{
+  "id": "arch-recreations",
+  "name": "𝗔𝗿𝗰𝗵 Recreations",
+  "version": "0.1.0",
+  "minAppVersion": "1.6.0",
+  "description": "A film library in the vault: look a title up, write the note with full-size poster, banner and stills from TMDB, hand the download to Radarr, fetch the subtitles when the file lands.",
+  "author": "Hoang Anh",
+  "isDesktopOnly": true,
+  "authorUrl": "https://github.com/therealhoanganh"
+}

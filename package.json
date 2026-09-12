@@ -1,0 +1,12 @@
+{
+  "name": "arch-recreations",
+  "version": "0.1.0",
+  "description": "Obsidian plugin that turns a film into a note with full-size art, and hands the download to Radarr.",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
