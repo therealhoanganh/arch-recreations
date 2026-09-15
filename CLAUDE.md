@@ -380,6 +380,56 @@ an error, so it looks exactly like "nothing was found". *Alien: Earth* was
 added and grabbed nothing for this reason; `waitForSeason` now polls
 `/episode` for up to a minute before searching.
 
+## Reading a 4K release by its name, and checking a file afterwards
+
+What a good 2160p release name looks like for this setup, in the order the
+words matter:
+
+- `2160p` **and** `WEB-DL` or `BluRay`, with `x265`/`H.265`/`HEVC` — the
+  normal case. 10–20 GB for a film, 4–8 GB for an hour-long episode.
+- `HDR`, `HDR10`, `HDR10+` — wanted. `DV HDR` is wanted too: Dolby Vision
+  layered on an HDR10 base, which VLC falls back to.
+- `DV` with no `HDR` beside it, or `DV.P5` — **avoid**, purple and green in
+  VLC.
+- `AV1` — **avoid**, no hardware decoding on this Mac.
+- `REMUX`, or a BluRay release around 50–80 GB (untouched disc, whether or
+  not it says remux) — avoid unless nothing else exists.
+- `WEBRip`, `HDTV`, `BDRip` at 2160p — usually a re-encode of a re-encode.
+  Sonarr's quality definitions already reject the small ones.
+- A release under about 8 GB for a 2-hour 4K film is over-compressed.
+
+A name can lie, and a 4K file is not necessarily HDR. `ffprobe` settles it,
+and is already installed:
+
+```
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,color_transfer,color_primaries \
+  -show_entries stream_side_data=dv_profile -show_entries format=bit_rate \
+  -of default=nw=1 "<file>"
+```
+
+`color_transfer=smpte2084` with `color_primaries=bt2020` is real HDR10;
+`bt709` is ordinary colour however large the file. A `dv_profile` of 5 is the
+Dolby Vision that breaks in VLC, 7 or 8 is fine.
+
+### The two 4K films on the drive, checked this way
+
+- **Dunkirk** (`…iMAX.MULTi.UHD.Blu-ray.2160p.HDR…HEVC-DDR`, 18 GB) — HEVC,
+  3840×2160, genuine HDR10, ~25 Mbit/s. A good copy; leave it alone.
+- **Solo: A Star Wars Story** (`…2160p.MA.WEB-DL…H.265-PandaQT`, 24 GB) —
+  HEVC 2160p at ~25 Mbit/s but **BT.709, not HDR** (checked at frame level
+  too). Sharp, but 24 GB for no HDR.
+
+A replacement for Solo was searched for in September 2026 and there was
+nothing worth taking: the only sensibly sized HDR encode (17.1 GB) had 4
+seeders — under the indexer's 10-seeder minimum, so the plugin will not even
+see it — the AV1 copy (19.5 GB) and the remux (57.9 GB) are both ruled out,
+and the one HDR release that was seeded (16) is 58.8 GB, effectively the
+whole disc. The user chose to keep the SDR copy and look again later. **If a
+well-seeded HDR encode of Solo around 12–20 GB ever appears, that is the
+upgrade to take**; Radarr already holds Solo at the 4K profile with its path
+pinned to `/Volumes/4T-HDD/4K/Solo A Star Wars Story (2018)`.
+
 ## Environment it was built against
 
 macOS Intel, Obsidian 1.13. Radarr 6.3 at `localhost:7878`, Prowlarr 2.5 at
