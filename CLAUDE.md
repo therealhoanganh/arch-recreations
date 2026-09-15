@@ -237,7 +237,7 @@ property, not a list in the body), its body the art like a film's; a **season
 note** `Title – Season N (Year)` (en dash, the season's first-aired year) with
 `season`, `episodes`, `series: [[Title (Year)]]`, its own TMDB season poster,
 tag `series/season` -- nested so a search for `series` finds both -- and the
-episode list **first** in the body, the poster under it after two blank lines,
+episode list **first** in the body, the poster under it after three blank lines,
 so the note opens on the list rather than on a tall image. Each episode is a
 line `- S1E1 – Name` until its file exists, then
 `- [S1E1 – Name](obsidian://arch-recreations?play=…)`, the same Open link a
