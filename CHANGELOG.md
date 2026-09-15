@@ -3,6 +3,21 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
+## Unreleased
+
+- **Import existing films from Radarr** and **Import existing series from
+  Sonarr**: one command each, writing a note (with its Open link once a file
+  is there) for everything those apps already track that has no note yet —
+  for a library built before this plugin existed, or added to Radarr/Sonarr
+  directly.
+- **Import films from the library folder**: the same, starting from disk
+  instead of from Radarr — for a folder shaped `Title (Year)` sitting in the
+  library that Radarr has never seen. Fixed alongside it: registering such a
+  folder used to hand Radarr its own generated folder name (a title's colon
+  becoming " -", say) instead of the name the folder actually has on disk, so
+  the rescan that was supposed to find the file looked in a folder that
+  didn't exist and never found it.
+
 ## 0.2.0 — current
 
 - **Series.** *Add a series* searches TMDB, then offers the seasons to
