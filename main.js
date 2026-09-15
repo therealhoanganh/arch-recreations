@@ -828,17 +828,25 @@ class ArchRecreationsPlugin extends Plugin {
     return f && f.parent ? f.parent.path.replace(/^\/$/, '') : '';
   }
 
-  resolveMovieFolder() {
+  // `quality` is the profile name a film is going to (or already sits in)
+  // Radarr under. A film at the "4K" profile goes into a "4K" subfolder of
+  // wherever movies otherwise land, so the two collections don't mix in the
+  // same listing; everything else about the setting is unchanged.
+  resolveMovieFolder(quality) {
     const s = this.settings;
     const mode = s.movieLocationMode || 'specified';
     const anchor = this.activeNoteFolder();
-    if (mode === 'vault') return '';
-    if (mode === 'same') return anchor;
-    if (mode === 'subfolder') {
+    let folder;
+    if (mode === 'vault') folder = '';
+    else if (mode === 'same') folder = anchor;
+    else if (mode === 'subfolder') {
       const sub = this.cleanFolder(s.movieSubfolder) || 'Movies';
-      return anchor ? `${anchor}/${sub}` : sub;
+      folder = anchor ? `${anchor}/${sub}` : sub;
+    } else folder = this.cleanFolder(s.movieFolder);
+    if (String(quality || '').trim().toLowerCase() === '4k') {
+      folder = folder ? `${folder}/4K` : '4K';
     }
-    return this.cleanFolder(s.movieFolder);
+    return folder;
   }
 
   resolveSeriesFolder() {
@@ -973,7 +981,7 @@ class ArchRecreationsPlugin extends Plugin {
       lap(`details for ${movie.title} (${movie.year})`);
 
       const vars = { title: L.safeFileName(movie.title), year: movie.year || '' };
-      const noteFolder = this.resolveMovieFolder();
+      const noteFolder = this.resolveMovieFolder(quality);
       await this.ensureFolder(noteFolder);
       const noteName = L.safeFileName(L.fillTemplate(this.settings.noteNameTemplate, vars));
       const notePath = normalizePath(noteFolder ? `${noteFolder}/${noteName}.md` : `${noteName}.md`);

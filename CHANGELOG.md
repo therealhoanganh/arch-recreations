@@ -5,6 +5,12 @@ explains what changed at each version and why.
 
 ## Unreleased
 
+- **A film at the "4K" quality profile goes into a `4K` subfolder** of
+  wherever movies otherwise land (`Movies/4K`, by default), so the two
+  collections don't mix in the same folder listing. The note's name is
+  unaffected — only its location changes. Applies wherever a quality name is
+  already known: *Add a film*'s dropdown and *Import existing films from
+  Radarr*.
 - **Import existing films from Radarr** and **Import existing series from
   Sonarr**: one command each, writing a note (with its Open link once a file
   is there) for everything those apps already track that has no note yet —
