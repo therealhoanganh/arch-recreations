@@ -1,6 +1,8 @@
 'use strict';
 
 const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, TFolder, normalizePath, requestUrl } = require('obsidian');
+const { execFile } = require('child_process');
+const net = require('net');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -16,15 +18,32 @@ const DEFAULT_SETTINGS = {
   radarrUrl: '',
   radarrApiKey: '',
   radarrRootFolder: '',
+  // Sonarr, the same way, for series.
+  sonarrUrl: '',
+  sonarrApiKey: '',
+  sonarrRootFolder: '',
   defaultQuality: '1080p',
-  checkMinutes: 10,
+  // Tried in order, highest first: the first floor with any (non-rejected)
+  // release clears is the one used, and the most-seeded release at that
+  // floor is what gets grabbed. Radarr's own per-indexer minimum seeders
+  // stays underneath this as a hard floor -- a release below it never
+  // appears in the list at all.
+  seederTiers: '1000, 500, 200, 100, 50, 20, 10',
+  // The app the note's file link opens the film in. Only that link is
+  // affected; the system default for .mp4 stays what it is. Empty for the
+  // system default.
+  player: 'VLC',
 
   // where film notes go. 'same' and 'subfolder' are relative to the note that
   // is open when the film is added.
   movieLocationMode: 'specified', // vault | same | subfolder | specified
   movieSubfolder: 'Movies',
   movieFolder: 'Movies',
-  // where the art goes, relative to the film note.
+  // where series notes go, with their season notes beside them.
+  seriesLocationMode: 'specified', // vault | same | subfolder | specified
+  seriesSubfolder: 'Series',
+  seriesFolder: 'Series',
+  // where the art goes, relative to the film or series note.
   imageLocationMode: 'subfolder', // vault | same | subfolder | specified
   imageSubfolder: 'Images',
   imageFolder: '',
@@ -32,20 +51,28 @@ const DEFAULT_SETTINGS = {
   // the note
   noteNameTemplate: '{{title}} ({{year}})',
   posterTemplate: '{{title}} ({{year}})',
-  bannerTemplate: '{{title}} ({{year}}) Banner',
-  stillTemplate: '{{title}} ({{year}}) Still {{n}}',
+  backdropTemplate: '{{title}} ({{year}}) Backdrop {{n}}',
   posterLabel: 'Poster',
   bannerLabel: 'Banner',
-  stillsCount: 5,
+  backdropsCount: 5,
   actorsCount: 5,
-  genreMap: 'Science Fiction = Sci-Fi',
+  genreMap: 'Science Fiction = Sci-Fi\nSci-Fi & Fantasy = Sci-Fi',
   movieTags: ['movie'],
+  // series and season notes
+  seasonNoteNameTemplate: '{{title}} \u2013 Season {{n}} ({{year}})',
+  seasonPosterTemplate: '{{title}} \u2013 Season {{n}} ({{year}})',
+  seriesTags: ['series'],
+  seasonTags: ['series/season'],
+  seriesNoteOrder: 'dl-ed, watched, rank, banner-p, seasons, year, quality, URL, poster, banner, genres, creator, actors, tags',
+  seasonNoteOrder: 'dl-ed, watched, rank, season, episodes, year, quality, series, poster, tags',
+  seriesNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
+  seasonNoteDefaults: 'watched: false\nrank: 0',
   // Listed keys are written in this order; an own key left out is not
   // written; a key a person added by hand is always kept.
-  movieNoteOrder: 'watched, rank, banner-p, duration, year, URL, poster, banner, genres, director, writer, actors, quality, dl-ed, file, tags',
+  movieNoteOrder: 'dl-ed, watched, rank, banner-p, duration, year, quality, file, URL, poster, banner, genres, director, writer, actors, tags',
   // "key: value" per line, written on every new note so the property exists to
   // be edited. A value already on a note is never changed.
-  movieNoteDefaults: 'watched: false\nrank: 5\nbanner-p: 50',
+  movieNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
 
   setupDone: false,
 };
@@ -61,6 +88,33 @@ class ArchRecreationsPlugin extends Plugin {
 
     this.addRibbonIcon('clapperboard', 'Add a film', () => this.openAddMovie());
     this.addCommand({ id: 'add-movie', name: 'Add a film', callback: () => this.openAddMovie() });
+    this.addCommand({ id: 'add-series', name: 'Add a series', callback: () => this.openAddSeries() });
+    this.addCommand({
+      id: 'check-sonarr',
+      name: 'Check Sonarr for finished downloads',
+      callback: () => this.checkSonarr(true),
+    });
+    this.addCommand({
+      id: 'download-series',
+      name: 'Download all seasons with Sonarr',
+      checkCallback: (checking) => {
+        const f = this.app.workspace.getActiveFile();
+        if (!f || f.extension !== 'md' || !this.tmdbTvIdOf(f)) return false;
+        if (!checking) this.downloadSeriesNote(f).catch((e) => this.fail(e));
+        return true;
+      },
+    });
+    this.addCommand({
+      id: 'download-season',
+      name: 'Download this season with Sonarr',
+      checkCallback: (checking) => {
+        const f = this.app.workspace.getActiveFile();
+        if (!f || f.extension !== 'md' || !this.seasonOf(f)) return false;
+        if (!checking) this.downloadSeasonNote(f).catch((e) => this.fail(e));
+        return true;
+      },
+    });
+    this.addCommand({ id: 'detect-sonarr', name: 'Detect Sonarr', callback: () => this.detectSonarr(true) });
     this.addCommand({
       id: 'check-downloads',
       name: 'Check Radarr for finished downloads',
@@ -76,21 +130,45 @@ class ArchRecreationsPlugin extends Plugin {
         return true;
       },
     });
+    this.addCommand({
+      id: 'download-note',
+      name: 'Download this film with Radarr',
+      checkCallback: (checking) => {
+        const f = this.app.workspace.getActiveFile();
+        if (!f || f.extension !== 'md' || !this.tmdbIdOf(f)) return false;
+        if (!checking) this.downloadNote(f).catch((e) => this.fail(e));
+        return true;
+      },
+    });
+    // Named after the player so it reads the way it is looked for ("Open this
+    // film in VLC"); the name is fixed at load, so a changed player setting
+    // shows after a reload.
+    const player = (this.settings.player || '').trim();
+    this.addCommand({
+      id: 'open-film',
+      name: player ? `Open this film in ${player}` : 'Open this film',
+      checkCallback: (checking) => {
+        const f = this.app.workspace.getActiveFile();
+        const fm = f && f.extension === 'md' ? this.app.metadataCache.getFileCache(f)?.frontmatter : null;
+        if (!fm || !fm.file) return false;
+        if (!checking) this.playFile(this.lib().pathFromFileProperty(fm.file));
+        return true;
+      },
+    });
     this.addCommand({ id: 'detect-radarr', name: 'Detect Radarr', callback: () => this.detectRadarr(true) });
+
+    // obsidian://arch-recreations?play=<path> -- what the note's file link is.
+    this.registerObsidianProtocolHandler('arch-recreations', (params) => {
+      if (params.play) this.playFile(params.play);
+    });
 
     this.app.workspace.onLayoutReady(async () => {
       if (!this.settings.setupDone) {
         await this.detectRadarr(false);
+        await this.detectSonarr(false);
         this.settings.setupDone = true;
         await this.saveSettings();
       }
-      // Radarr keeps working while Obsidian is closed, so the first thing to do
-      // on opening is ask what finished meanwhile.
-      this.checkDownloads(false).catch((e) => this.log('download check failed:', e.message));
-      const every = Math.max(1, Number(this.settings.checkMinutes) || 10) * 60 * 1000;
-      this.registerInterval(
-        window.setInterval(() => this.checkDownloads(false).catch((e) => this.log('download check failed:', e.message)), every)
-      );
     });
   }
 
@@ -130,12 +208,21 @@ class ArchRecreationsPlugin extends Plugin {
   purgeModuleCache() {
     let dir;
     try {
-      dir = path.join(this.pluginDir(), 'lib');
+      // Node caches a required module under its resolved real path, not the
+      // path it was asked for -- so a symlinked dev install (TESTFIELD) is
+      // cached under the repo's own path in Documents. Comparing against the
+      // symlinked path here never matched, so an edited lib/ was silently
+      // never purged on reload; realpathSync matches what Node actually did.
+      dir = fs.realpathSync(path.join(this.pluginDir(), 'lib'));
     } catch (_) {
       return;
     }
-    for (const key of Object.keys(require.cache || {})) {
-      if (key.startsWith(dir)) delete require.cache[key];
+    // The `require` a plugin is handed is Obsidian's wrapper, and its
+    // `.cache` is not Node's -- the loop below saw an empty object and purged
+    // nothing. Electron's real one is `window.require`.
+    const cache = (typeof window !== 'undefined' && window.require && window.require.cache) || require.cache || {};
+    for (const key of Object.keys(cache)) {
+      if (key.startsWith(dir)) delete cache[key];
     }
   }
 
@@ -174,6 +261,17 @@ class ArchRecreationsPlugin extends Plugin {
     });
   }
 
+  sonarr(method, pathname, body) {
+    const { sonarrUrl, sonarrApiKey } = this.settings;
+    if (!sonarrUrl || !sonarrApiKey) throw new Error('Sonarr is not configured. Run "Detect Sonarr" or fill in the settings.');
+    return this.json({
+      url: `${sonarrUrl.replace(/\/+$/, '')}/api/v3${pathname}`,
+      method,
+      headers: { 'X-Api-Key': sonarrApiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
   openSubtitles(method, pathname, params, body) {
     if (!this.settings.openSubtitlesApiKey) throw new Error('No OpenSubtitles API key in settings.');
     const q = params ? '?' + new URLSearchParams(params) : '';
@@ -188,6 +286,48 @@ class ArchRecreationsPlugin extends Plugin {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+  }
+
+  // Opens the film in the player named in settings, on whatever machine this
+  // is. The file is looked for wherever the drive is mounted here (lib's
+  // locateFile), and the player is asked for the way this platform asks --
+  // `open -a` on macOS, `start` on Windows, the bare command on Linux -- with
+  // the system default as the fallback when the player is not installed.
+  playFile(stored) {
+    const { locateFile } = this.lib();
+    const player = (this.settings.player || '').trim();
+    const file = locateFile(stored);
+    if (!file) {
+      this.log('film not found on any mounted drive:', stored);
+      new Notice(`The film is not on any drive plugged into this machine: ${path.basename(stored)}`, 8000);
+      return;
+    }
+    if (file !== stored) this.log('film found at a different mount point on this machine:', file);
+    const attempts = [];
+    if (process.platform === 'darwin') {
+      if (player) attempts.push(['open', ['-a', player, file]]);
+      attempts.push(['open', [file]]);
+    } else if (process.platform === 'win32') {
+      if (player) attempts.push(['cmd', ['/c', 'start', '', player, file]]);
+      attempts.push(['cmd', ['/c', 'start', '', file]]);
+    } else {
+      if (player) attempts.push([player.toLowerCase(), [file]]);
+      attempts.push(['xdg-open', [file]]);
+    }
+    const tryNext = (i) => {
+      if (i >= attempts.length) {
+        new Notice(`Could not open ${path.basename(file)} with anything on this machine.`, 8000);
+        return;
+      }
+      const [cmd, args] = attempts[i];
+      execFile(cmd, args, (err) => {
+        if (err) {
+          this.log(`${cmd} ${args[0] === '-a' ? args[1] : ''} could not open it (${err.message.split('\n')[0]}), trying the next`);
+          tryNext(i + 1);
+        } else this.log(`opened with ${cmd}${args[0] === '-a' ? ' ' + args[1] : ''}:`, file);
+      });
+    };
+    tryNext(0);
   }
 
   /* ---------------- TMDB ---------------- */
@@ -209,10 +349,42 @@ class ArchRecreationsPlugin extends Plugin {
       include_image_language: 'en,null',
     });
     return movieFromTmdb(json, {
-      stills: Number(this.settings.stillsCount) || 0,
+      backdrops: Number(this.settings.backdropsCount) || 0,
       actors: Number(this.settings.actorsCount) || 5,
       genreMap: parseRenameMap(this.settings.genreMap),
     });
+  }
+
+  async searchSeries(query) {
+    const r = await this.tmdb('/search/tv', { query, include_adult: 'false' });
+    return (r.results || []).map((m) => ({
+      tmdbId: m.id,
+      title: m.name,
+      year: String(m.first_air_date || '').slice(0, 4),
+      overview: m.overview || '',
+    }));
+  }
+
+  async seriesDetails(tmdbId) {
+    const { seriesFromTmdb, parseRenameMap } = this.lib();
+    const json = await this.tmdb(`/tv/${tmdbId}`, {
+      append_to_response: 'images,aggregate_credits,external_ids',
+      include_image_language: 'en,null',
+    });
+    return seriesFromTmdb(json, {
+      backdrops: Number(this.settings.backdropsCount) || 0,
+      actors: Number(this.settings.actorsCount) || 5,
+      genreMap: parseRenameMap(this.settings.genreMap),
+    });
+  }
+
+  async seasonDetails(tmdbId, number) {
+    const { seasonFromTmdb } = this.lib();
+    const json = await this.tmdb(`/tv/${tmdbId}/season/${number}`, {
+      append_to_response: 'images',
+      include_image_language: 'en,null',
+    });
+    return seasonFromTmdb(json);
   }
 
   /* ---------------- Radarr ---------------- */
@@ -252,8 +424,268 @@ class ArchRecreationsPlugin extends Plugin {
     return !!(this.settings.radarrUrl && this.settings.radarrApiKey);
   }
 
+  /* ---------------- Sonarr ---------------- */
+
+  sonarrConfigured() {
+    return !!(this.settings.sonarrUrl && this.settings.sonarrApiKey);
+  }
+
+  async detectSonarr(manual) {
+    const { readSonarrConfig } = this.lib();
+    const found = readSonarrConfig(process.platform, os.homedir(), process.env);
+    if (!found) {
+      this.log('Sonarr config.xml not found; Sonarr is optional, series notes and art still work');
+      if (manual) new Notice('Sonarr not found on this machine. It is optional: series notes and art work without it.', 8000);
+      return false;
+    }
+    this.settings.sonarrUrl = found.url;
+    this.settings.sonarrApiKey = found.apiKey;
+    this.log('Sonarr found via', found.file, '->', found.url);
+    try {
+      const roots = await this.sonarr('GET', '/rootfolder');
+      if (roots.length && !this.settings.sonarrRootFolder) this.settings.sonarrRootFolder = roots[0].path;
+      const names = (await this.sonarr('GET', '/qualityprofile')).map((p) => p.name);
+      this.log(`Sonarr: library ${this.settings.sonarrRootFolder || '(none)'}, profiles ${names.join(', ')}`);
+      if (manual) new Notice(`Sonarr found at ${found.url}. Profiles: ${names.join(', ')}.`, 8000);
+    } catch (e) {
+      this.log('Sonarr found but not answering:', e.message);
+      if (manual) new Notice(`Sonarr's config was found but it is not answering: ${e.message}`, 10000);
+    }
+    await this.saveSettings();
+    return true;
+  }
+
+  async ensureSonarr() {
+    if (!this.sonarrConfigured()) return false;
+    let port = 8989;
+    let host = 'localhost';
+    try {
+      const u = new URL(this.settings.sonarrUrl);
+      host = u.hostname || host;
+      port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+    } catch (_) {
+      /* keep the defaults */
+    }
+    if (!['localhost', '127.0.0.1', '::1'].includes(host)) return this.portOpen(host, port);
+    return this.ensureRunning('Sonarr', host, port);
+  }
+
+  async sonarrProfiles() {
+    return (await this.sonarr('GET', '/qualityprofile')).map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  // Sonarr's series carry both ids; TMDB's is what the note holds.
+  async sonarrSeriesByTmdb(tmdbId, tvdbId) {
+    const all = await this.sonarr('GET', '/series');
+    return all.find((x) => x.tmdbId === tmdbId) || (tvdbId ? all.find((x) => x.tvdbId === tvdbId) : null) || null;
+  }
+
+  // Adds with nothing monitored and no search: `addOptions.monitor` overrides
+  // the per-season flags sent in the same call, so seasons are chosen in a
+  // second call (`monitorSeasons`) and the searching is the plugin's.
+  async addToSonarr(series, qualityName) {
+    await this.ensureSonarr();
+    if (!series.tvdbId) throw new Error(`TMDB has no TVDB id for ${series.title}, and Sonarr needs one.`);
+    const existing = await this.sonarrSeriesByTmdb(series.tmdbId, series.tvdbId);
+    if (existing) {
+      this.log('already in Sonarr, not added again:', existing.title);
+      return existing;
+    }
+    const profiles = await this.sonarrProfiles();
+    const profile = profiles.find((p) => p.name.toLowerCase() === String(qualityName || '').toLowerCase());
+    if (!profile) throw new Error(`Sonarr has no quality profile named "${qualityName}". It has: ${profiles.map((p) => p.name).join(', ')}.`);
+    let root = this.settings.sonarrRootFolder;
+    if (!root) {
+      const roots = await this.sonarr('GET', '/rootfolder');
+      root = roots.length ? roots[0].path : '';
+      if (!root) throw new Error('Sonarr has no library folder set.');
+    }
+    const found = await this.sonarr('GET', `/series/lookup?term=${encodeURIComponent('tvdb:' + series.tvdbId)}`);
+    if (!found || !found.length) throw new Error(`Sonarr could not find tvdb:${series.tvdbId}.`);
+    const body = {
+      ...found[0],
+      qualityProfileId: profile.id,
+      rootFolderPath: root,
+      monitored: true,
+      seasonFolder: true,
+      addOptions: { searchForMissingEpisodes: false, searchForCutoffUnmetEpisodes: false, monitor: 'none' },
+    };
+    const added = await this.sonarr('POST', '/series', body);
+    this.log(`added to Sonarr as ${profile.name}:`, added.title, added.year, '->', added.path);
+    return added;
+  }
+
+  // Turns the chosen seasons on, leaves the rest as they are. Episodes follow
+  // their season on Sonarr's side.
+  async monitorSeasons(sonarrSeries, numbers) {
+    const wanted = new Set(numbers);
+    let changed = false;
+    for (const x of sonarrSeries.seasons) {
+      if (wanted.has(x.seasonNumber) && !x.monitored) {
+        x.monitored = true;
+        changed = true;
+      }
+    }
+    if (!sonarrSeries.monitored) {
+      sonarrSeries.monitored = true;
+      changed = true;
+    }
+    if (!changed) return sonarrSeries;
+    const updated = await this.sonarr('PUT', `/series/${sonarrSeries.id}`, sonarrSeries);
+    this.log(`monitoring season(s) ${[...wanted].join(', ')} of ${updated.title}`);
+    return updated;
+  }
+
+  async seasonInQueue(seriesId, seasonNumber) {
+    const q = await this.sonarr('GET', '/queue?pageSize=200');
+    return (q.records || []).some((r) => r.seriesId === seriesId && r.seasonNumber === seasonNumber);
+  }
+
+  async seasonHasAllFiles(seriesId, seasonNumber) {
+    const eps = await this.sonarr('GET', `/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`);
+    const aired = eps.filter((e) => e.airDate && e.airDate <= new Date().toISOString().slice(0, 10));
+    return aired.length > 0 && aired.every((e) => e.hasFile);
+  }
+
+  // The season search: packs and single episodes together, the cascade
+  // preferring a pack inside a tier so the season is one torrent.
+  async searchAndGrabSeason(seriesId, seasonNumber, title) {
+    await this.ensureDownloadClient('sonarr');
+    let releases;
+    try {
+      releases = await this.sonarr('GET', `/release?seriesId=${seriesId}&seasonNumber=${seasonNumber}`);
+    } catch (e) {
+      this.log(`release search failed for ${title} season ${seasonNumber}:`, e.message);
+      return false;
+    }
+    const tiers = this.lib().parseSeederTiers(this.settings.seederTiers);
+    const picked = this.lib().pickRelease(releases, tiers, { preferFullSeason: true });
+    if (!picked) {
+      this.log(`no release cleared any seeder floor (${tiers.join(', ') || 'none set'}) for ${title} season ${seasonNumber}; nothing grabbed`);
+      return false;
+    }
+    await this.sonarr('POST', '/release', { guid: picked.release.guid, indexerId: picked.release.indexerId });
+    this.log(
+      `grabbed at the ${picked.floor}+ seeder floor (${picked.release.seeders} actual, ${picked.release.fullSeason ? 'season pack' : 'single episodes'}) for ${title} season ${seasonNumber}:`,
+      picked.release.title
+    );
+    return true;
+  }
+
+  // One season: monitored in Sonarr, then searched unless it is already
+  // complete or already in the queue.
+  async downloadSeason(sonarrSeries, seasonNumber) {
+    const updated = await this.monitorSeasons(sonarrSeries, [seasonNumber]);
+    if (await this.seasonHasAllFiles(updated.id, seasonNumber)) {
+      this.log(`season ${seasonNumber} of ${updated.title} already has every episode`);
+      return updated;
+    }
+    if (await this.seasonInQueue(updated.id, seasonNumber)) {
+      this.log(`season ${seasonNumber} of ${updated.title} is already in Sonarr's queue`);
+      return updated;
+    }
+    await this.searchAndGrabSeason(updated.id, seasonNumber, updated.title);
+    return updated;
+  }
+
+  /* ---------------- keeping the apps alive ---------------- */
+
+  portOpen(host, port) {
+    return new Promise((resolve) => {
+      const sock = net.connect({ host: host || 'localhost', port: Number(port) });
+      const done = (ok) => {
+        try {
+          sock.destroy();
+        } catch (_) {
+          /* gone */
+        }
+        resolve(ok);
+      };
+      sock.setTimeout(800);
+      sock.once('connect', () => done(true));
+      sock.once('timeout', () => done(false));
+      sock.once('error', () => done(false));
+    });
+  }
+
+  // Launches an app in the background -- `open -g` on macOS keeps it behind
+  // Obsidian -- and waits until its port answers. Nothing to configure: the
+  // app's name is what the platform launches by.
+  async ensureRunning(appName, host, port, waitMs = 30000) {
+    if (await this.portOpen(host, port)) return true;
+    this.log(`${appName} is not running, starting it`);
+    const launch =
+      process.platform === 'darwin' ? ['open', ['-g', '-a', appName]]
+      : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', appName]]
+      : [appName.toLowerCase(), []];
+    await new Promise((resolve) => execFile(launch[0], launch[1], (err) => {
+      if (err) this.log(`could not start ${appName}:`, err.message.split('\n')[0]);
+      resolve();
+    }));
+    const started = Date.now();
+    while (Date.now() - started < waitMs) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (await this.portOpen(host, port)) {
+        this.log(`${appName} is up after ${Math.round((Date.now() - started) / 1000)}s`);
+        return true;
+      }
+    }
+    this.log(`${appName} did not answer on port ${port} within ${waitMs / 1000}s`);
+    return false;
+  }
+
+  async ensureRadarr() {
+    if (!this.radarrConfigured()) return false;
+    let port = 7878;
+    let host = 'localhost';
+    try {
+      const u = new URL(this.settings.radarrUrl);
+      host = u.hostname || host;
+      port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+    } catch (_) {
+      /* keep the defaults */
+    }
+    // Only an app on this machine can be started from here.
+    if (!['localhost', '127.0.0.1', '::1'].includes(host)) return this.portOpen(host, port);
+    return this.ensureRunning('Radarr', host, port);
+  }
+
+  // Radarr says which client it hands downloads to -- Transmission,
+  // qBittorrent -- and on which port; that is enough to start it and know
+  // when it is ready.
+  async ensureDownloadClient(app = 'radarr') {
+    let clients;
+    try {
+      clients = await (app === 'sonarr' ? this.sonarr('GET', '/downloadclient') : this.radarr('GET', '/downloadclient'));
+    } catch (e) {
+      this.log(`could not ask ${app === 'sonarr' ? 'Sonarr' : 'Radarr'} for its download client:`, e.message);
+      return false;
+    }
+    const c = clients.find((x) => x.enable) || clients[0];
+    if (!c) {
+      this.log(`${app === 'sonarr' ? 'Sonarr' : 'Radarr'} has no download client configured`);
+      return false;
+    }
+    const field = (name) => (c.fields.find((f) => f.name === name) || {}).value;
+    const host = field('host') || 'localhost';
+    const port = field('port') || (c.implementation === 'Transmission' ? 9091 : 8080);
+    if (!['localhost', '127.0.0.1', '::1'].includes(host)) return this.portOpen(host, port);
+    return this.ensureRunning(c.implementation, host, port);
+  }
+
   async radarrProfiles() {
     return (await this.radarr('GET', '/qualityprofile')).map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  // The profile's name for a film Radarr already holds; the id is Radarr's
+  // and never goes on a note.
+  async profileNameOf(profileId, fallback) {
+    try {
+      const p = (await this.radarrProfiles()).find((x) => x.id === profileId);
+      return p ? p.name : fallback;
+    } catch (_) {
+      return fallback;
+    }
   }
 
   async radarrMovieByTmdb(tmdbId) {
@@ -261,10 +693,53 @@ class ArchRecreationsPlugin extends Plugin {
     return Array.isArray(list) && list.length ? list[0] : null;
   }
 
-  // Adds the film and starts the search in one call. A film Radarr already has
+  // Runs a Radarr command and waits for it to finish, briefly: a rescan of one
+  // folder takes a second or two, and the answer is only useful once it has.
+  async radarrCommand(body, timeoutMs = 30000) {
+    const cmd = await this.radarr('POST', '/command', body);
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const c = await this.radarr('GET', `/command/${cmd.id}`);
+      if (c.status === 'completed' || c.status === 'failed' || c.status === 'aborted') return c;
+    }
+    this.log(`Radarr command ${body.name} still running after ${timeoutMs / 1000}s, not waiting further`);
+    return null;
+  }
+
+  // Registers a film with Radarr without downloading it -- unmonitored, no
+  // search -- so a file put in its library folder by hand is adopted on the
+  // next rescan. That is how a manual 4K download gets its link.
+  async registerInRadarr(tmdbId) {
+    let root = this.settings.radarrRootFolder;
+    if (!root) {
+      const roots = await this.radarr('GET', '/rootfolder');
+      root = roots.length ? roots[0].path : '';
+      if (!root) throw new Error('Radarr has no library folder set.');
+    }
+    const profiles = await this.radarrProfiles();
+    const profile = profiles.find((p) => p.name.toLowerCase() === String(this.settings.defaultQuality).toLowerCase()) || profiles[0];
+    if (!profile) throw new Error('Radarr has no quality profile.');
+    const added = await this.radarr('POST', '/movie', {
+      tmdbId,
+      qualityProfileId: profile.id,
+      rootFolderPath: root,
+      monitored: false,
+      minimumAvailability: 'released',
+      addOptions: { searchForMovie: false },
+    });
+    this.log('registered in Radarr, unmonitored, so its folder is watched:', added.title, '->', added.path);
+    return added;
+  }
+
+  // Adds the film and searches for it in one call. A film Radarr already has
   // is left as it is -- Radarr refuses duplicates, and re-adding is not what a
-  // second note means.
+  // second note means. The search Radarr would run on its own is skipped
+  // (`searchForMovie: false`); `searchAndGrab` does it instead, so the
+  // seeder-tier cascade decides what gets grabbed rather than Radarr's own
+  // pick.
   async addToRadarr(tmdbId, qualityName) {
+    await this.ensureRadarr();
     const existing = await this.radarrMovieByTmdb(tmdbId);
     if (existing) {
       this.log('already in Radarr, not added again:', existing.title, existing.hasFile ? '(has file)' : '(no file yet)');
@@ -279,16 +754,45 @@ class ArchRecreationsPlugin extends Plugin {
       root = roots.length ? roots[0].path : '';
       if (!root) throw new Error('Radarr has no library folder set.');
     }
+    await this.ensureDownloadClient();
     const added = await this.radarr('POST', '/movie', {
       tmdbId,
       qualityProfileId: profile.id,
       rootFolderPath: root,
       monitored: true,
       minimumAvailability: 'released',
-      addOptions: { searchForMovie: true },
+      addOptions: { searchForMovie: false },
     });
-    this.log(`sent to Radarr as ${profile.name}:`, added.title, added.year, '->', added.path);
+    this.log(`added to Radarr as ${profile.name}:`, added.title, added.year, '->', added.path);
+    await this.searchAndGrab(added.id, added.title);
     return added;
+  }
+
+  // The cascade: Radarr's own live release search (the same one its
+  // interactive search uses), then the highest seeder tier that has any
+  // non-rejected release wins, most-seeded release in that tier grabbed by
+  // its own guid -- so Radarr never gets to fall back to its default pick.
+  async searchAndGrab(movieId, title) {
+    await this.ensureDownloadClient();
+    let releases;
+    try {
+      releases = await this.radarr('GET', `/release?movieId=${movieId}`);
+    } catch (e) {
+      this.log(`release search failed for ${title}:`, e.message);
+      return false;
+    }
+    const tiers = this.lib().parseSeederTiers(this.settings.seederTiers);
+    const picked = this.lib().pickRelease(releases, tiers);
+    if (!picked) {
+      this.log(`no release cleared any seeder floor (${tiers.join(', ') || 'none set'}) for ${title}; nothing grabbed`);
+      return false;
+    }
+    await this.radarr('POST', '/release', { guid: picked.release.guid, indexerId: picked.release.indexerId });
+    this.log(
+      `grabbed at the ${picked.floor}+ seeder floor (${picked.release.seeders} actual) for ${title}:`,
+      picked.release.title
+    );
+    return true;
   }
 
   /* ---------------- folders ---------------- */
@@ -315,6 +819,19 @@ class ArchRecreationsPlugin extends Plugin {
     return this.cleanFolder(s.movieFolder);
   }
 
+  resolveSeriesFolder() {
+    const s = this.settings;
+    const mode = s.seriesLocationMode || 'specified';
+    const anchor = this.activeNoteFolder();
+    if (mode === 'vault') return '';
+    if (mode === 'same') return anchor;
+    if (mode === 'subfolder') {
+      const sub = this.cleanFolder(s.seriesSubfolder) || 'Series';
+      return anchor ? `${anchor}/${sub}` : sub;
+    }
+    return this.cleanFolder(s.seriesFolder);
+  }
+
   resolveImageFolder(noteFolder) {
     const s = this.settings;
     const mode = s.imageLocationMode || 'subfolder';
@@ -337,7 +854,9 @@ class ArchRecreationsPlugin extends Plugin {
   // Encoded to WebP here rather than left for ARCH Images Plus: the note is
   // written moments after the image, and a link written as .jpg to a file that
   // becomes .webp a second later is a race. Quality 0.90, the same as Images
-  // Plus, because the original is not kept.
+  // Plus, because the original is not kept. Always .webp, even when the WebP
+  // is a little larger than the JPEG -- one extension for every image the
+  // plugin writes, which the user asked for over a few KB.
   async saveImage(url, folder, stem) {
     const target = normalizePath(folder ? `${folder}/${stem}.webp` : `${stem}.webp`);
     const already = this.app.vault.getAbstractFileByPath(target);
@@ -352,12 +871,8 @@ class ArchRecreationsPlugin extends Plugin {
     let out = target;
     try {
       const { encodeWebp } = this.lib();
-      const encoded = await encodeWebp(new Blob([res.arrayBuffer], { type }), 0.9);
-      if (encoded.data) bytes = encoded.data;
-      else {
-        out = normalizePath(target.replace(/\.webp$/, type.includes('png') ? '.png' : '.jpg'));
-        this.log('kept the original format, WebP would be larger:', stem);
-      }
+      const encoded = await encodeWebp(new Blob([res.arrayBuffer], { type }), 0.9, { always: true });
+      bytes = encoded.data;
     } catch (e) {
       out = normalizePath(target.replace(/\.webp$/, type.includes('png') ? '.png' : '.jpg'));
       this.log('WebP encode failed, keeping the original:', e.message);
@@ -376,6 +891,36 @@ class ArchRecreationsPlugin extends Plugin {
       /* fall back to the full path */
     }
     return alias ? `[[${link}|${alias}]]` : `[[${link}]]`;
+  }
+
+  // The poster and the backdrops for one note, saved and turned into links.
+  // Backdrops are numbered 01, 02, ... and the banner property points at the
+  // first of them: one file, two roles. Shared by films, series and seasons.
+  async fetchArt(where, posterUrl, backdropUrls, posterTemplate, backdropTemplate) {
+    const L = this.lib();
+    const { vars, imageFolder, notePath } = where;
+    const art = async (url, template, n) => {
+      if (!url) return null;
+      const stem = L.safeFileName(L.fillTemplate(template, { ...vars, n }));
+      try {
+        return await this.saveImage(url, imageFolder, stem);
+      } catch (e) {
+        this.log(`image failed (${stem}):`, e.message);
+        return null;
+      }
+    };
+    const links = {};
+    const backdropLinks = [];
+    const posterFile = await art(posterUrl, posterTemplate, vars.n || '');
+    if (posterFile) links.poster = this.linkFor(posterFile, notePath, this.settings.posterLabel);
+    for (let i = 0; i < (backdropUrls || []).length; i++) {
+      const n = String(i + 1).padStart(2, '0');
+      const f = await art(backdropUrls[i], backdropTemplate, n);
+      if (!f) continue;
+      backdropLinks.push(this.linkFor(f, notePath, ''));
+      if (!links.banner) links.banner = this.linkFor(f, notePath, this.settings.bannerLabel);
+    }
+    return { posterFile, links, backdropLinks };
   }
 
   /* ---------------- adding a film ---------------- */
@@ -412,49 +957,53 @@ class ArchRecreationsPlugin extends Plugin {
 
       const imageFolder = this.resolveImageFolder(noteFolder);
       await this.ensureFolder(imageFolder);
-      const links = {};
-      const stillLinks = [];
-      const art = async (url, template, n, alias) => {
-        if (!url) return '';
-        const stem = L.safeFileName(L.fillTemplate(template, { ...vars, n }));
-        try {
-          const file = await this.saveImage(url, imageFolder, stem);
-          return file ? this.linkFor(file, notePath, alias) : '';
-        } catch (e) {
-          this.log(`image failed (${stem}):`, e.message);
-          return '';
-        }
-      };
-      links.poster = await art(movie.poster, this.settings.posterTemplate, '', this.settings.posterLabel);
-      links.banner = await art(movie.banner, this.settings.bannerTemplate, '', this.settings.bannerLabel);
-      for (let i = 0; i < movie.stills.length; i++) {
-        const l = await art(movie.stills[i], this.settings.stillTemplate, i + 1, '');
-        if (l) stillLinks.push(l);
-      }
-      lap(`art: ${[links.poster && 'poster', links.banner && 'banner'].filter(Boolean).join(', ')}, ${stillLinks.length} still(s)`);
+      const { posterFile, links, backdropLinks } = await this.fetchArt(
+        { vars, imageFolder, notePath },
+        movie.poster,
+        movie.backdrops,
+        this.settings.posterTemplate,
+        this.settings.backdropTemplate
+      );
+      lap(`art: ${links.poster ? 'poster, ' : ''}${backdropLinks.length} backdrop(s)`);
 
-      const radarr = !!sendToRadarr && this.radarrConfigured();
+      // Radarr is always asked what it already has -- a read-only lookup --
+      // so a film it downloaded earlier gets its file link whatever the box
+      // says. The box only decides whether a download is started.
+      let known = null;
+      if (this.radarrConfigured()) {
+        try {
+          await this.ensureRadarr();
+          known = await this.radarrMovieByTmdb(tmdbId);
+          if (known) this.log('Radarr already has it:', known.title, known.hasFile ? '(file done)' : '(no file yet)');
+        } catch (e) {
+          this.log('Radarr not answering, note written without it:', e.message);
+        }
+      }
+      const willDownload = !!sendToRadarr && this.radarrConfigured();
+      const radarr = !!known || willDownload;
+      const qualityName = known ? await this.profileNameOf(known.qualityProfileId, quality) : quality;
       const fields = L.movieNoteFields(movie, links, {
         tags: this.settings.movieTags,
-        quality: radarr ? quality : undefined,
+        quality: radarr ? qualityName : undefined,
         radarr,
       });
-      const file = await this.writeMovieNote(notePath, fields, L.movieNoteBody(stillLinks));
+      const body = L.movieNoteBody(posterFile ? this.linkFor(posterFile, notePath, '') : '', backdropLinks);
+      const file = await this.writeMovieNote(notePath, fields, body);
       lap(`note ${file.path}`);
 
-      if (radarr) {
+      if (willDownload && !known) {
         try {
-          const r = await this.addToRadarr(tmdbId, quality);
-          if (r && r.hasFile && r.movieFile && r.movieFile.path) {
-            await this.markDownloaded(file, r.movieFile.path);
-            this.subtitlesFor(file, r).catch((e) => this.log('subtitles failed:', e.message));
-          }
+          known = await this.addToRadarr(tmdbId, quality);
         } catch (e) {
           this.log('Radarr step failed:', e.message);
           new Notice(`Note written, but Radarr said: ${e.message}`, 12000);
         }
-      } else if (sendToRadarr) {
+      } else if (sendToRadarr && !this.radarrConfigured()) {
         this.log('Radarr not configured; note written without a download');
+      }
+      if (known && known.hasFile && known.movieFile && known.movieFile.path) {
+        await this.markDownloaded(file, known.movieFile.path);
+        this.subtitlesFor(file, known).catch((e) => this.log('subtitles failed:', e.message));
       }
 
       new Notice(`${movie.title} (${movie.year}) added.`, 5000);
@@ -466,12 +1015,12 @@ class ArchRecreationsPlugin extends Plugin {
     }
   }
 
-  // A new note gets defaults, the plugin's fields and the stills wall. A note
+  // A new note gets defaults, the plugin's fields and the backdrop wall. A note
   // that already exists keeps its body and every property it holds; only the
   // plugin's own fields are refreshed. Hand-edited values are never touched.
-  async writeMovieNote(notePath, fields, body) {
+  async writeMovieNote(notePath, fields, body, order = this.settings.movieNoteOrder, defaultsRaw = this.settings.movieNoteDefaults) {
     const L = this.lib();
-    const defaults = L.parseDefaults(this.settings.movieNoteDefaults);
+    const defaults = L.parseDefaults(defaultsRaw);
     const existing = this.app.vault.getAbstractFileByPath(notePath);
     if (existing instanceof TFile) {
       await this.app.fileManager.processFrontMatter(existing, (fm) => {
@@ -485,23 +1034,23 @@ class ArchRecreationsPlugin extends Plugin {
           } else fm[k] = v;
         }
         L.addMissingDefaults(fm, defaults);
-        L.applyOrder(fm, this.settings.movieNoteOrder, L.OWN_KEYS);
+        L.applyOrder(fm, order, L.OWN_KEYS);
       });
       this.log('note existed, properties refreshed and body left alone:', notePath);
       return existing;
     }
     const fm = { ...defaults, ...fields };
-    L.applyOrder(fm, this.settings.movieNoteOrder, L.OWN_KEYS);
+    L.applyOrder(fm, order, L.OWN_KEYS);
     await this.app.vault.create(notePath, L.buildFrontmatter(fm) + (body ? '\n' + body : ''));
     const file = this.app.vault.getAbstractFileByPath(notePath);
     return file;
   }
 
-  async setFields(file, fields) {
+  async setFields(file, fields, order = this.settings.movieNoteOrder) {
     const L = this.lib();
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       for (const [k, v] of Object.entries(fields)) fm[k] = v;
-      L.applyOrder(fm, this.settings.movieNoteOrder, L.OWN_KEYS);
+      L.applyOrder(fm, order, L.OWN_KEYS);
     });
   }
 
@@ -516,16 +1065,313 @@ class ArchRecreationsPlugin extends Plugin {
     return null;
   }
 
+  tmdbTvIdOf(file) {
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return null;
+    const { tmdbTvIdFromText } = this.lib();
+    for (const v of Object.values(fm)) {
+      const id = typeof v === 'string' ? tmdbTvIdFromText(v) : null;
+      if (id) return id;
+    }
+    return null;
+  }
+
+  // A season note: its `season` number and the series note it links to.
+  seasonOf(file) {
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm || !Number.isFinite(Number(fm.season)) || !fm.series) return null;
+    const m = String(fm.series).match(/\[\[([^\]|]+)/);
+    if (!m) return null;
+    const seriesFile = this.app.metadataCache.getFirstLinkpathDest(m[1].trim(), file.path);
+    if (!(seriesFile instanceof TFile)) return null;
+    const tmdbId = this.tmdbTvIdOf(seriesFile);
+    if (!tmdbId) return null;
+    return { number: Number(fm.season), seriesFile, tmdbId };
+  }
+
+  /* ---------------- adding a series ---------------- */
+
+  openAddSeries() {
+    if (!this.settings.tmdbApiKey) {
+      new Notice('Put your TMDB API key in the ARCH Recreations settings first.', 8000);
+      return;
+    }
+    new AddSeriesModal(this.app, this).open();
+  }
+
+  // The whole thing for one series: details, art, the series note, one note
+  // per season with its own poster and episode list, then Sonarr for the
+  // seasons chosen. `seasonNumbers` is null for notes only.
+  async addSeries(tmdbId, quality, seasonNumbers) {
+    const key = `tv:${tmdbId}`;
+    if (this.inFlight.has(key)) {
+      new Notice('That series is already being added.');
+      return;
+    }
+    this.inFlight.add(key);
+    const t0 = Date.now();
+    const lap = (label) => this.log(`${label}: ${Date.now() - t0}ms`);
+    try {
+      const L = this.lib();
+      const series = await this.seriesDetails(tmdbId);
+      lap(`details for ${series.title} (${series.year}), ${series.seasons.length} season(s)`);
+
+      const vars = { title: L.safeFileName(series.title), year: series.year || '' };
+      const noteFolder = this.resolveSeriesFolder();
+      await this.ensureFolder(noteFolder);
+      const noteName = L.safeFileName(L.fillTemplate(this.settings.noteNameTemplate, vars));
+      const notePath = normalizePath(noteFolder ? `${noteFolder}/${noteName}.md` : `${noteName}.md`);
+      const imageFolder = this.resolveImageFolder(noteFolder);
+      await this.ensureFolder(imageFolder);
+
+      const { posterFile, links, backdropLinks } = await this.fetchArt(
+        { vars, imageFolder, notePath },
+        series.poster,
+        series.backdrops,
+        this.settings.posterTemplate,
+        this.settings.backdropTemplate
+      );
+      lap(`art: ${links.poster ? 'poster, ' : ''}${backdropLinks.length} backdrop(s)`);
+
+      // Sonarr is asked what it has before the notes are written, so a season
+      // it already holds gets its episode links straight away.
+      let known = null;
+      const wantsSonarr = Array.isArray(seasonNumbers) && seasonNumbers.length > 0 && this.sonarrConfigured();
+      if (this.sonarrConfigured()) {
+        try {
+          await this.ensureSonarr();
+          known = await this.sonarrSeriesByTmdb(series.tmdbId, series.tvdbId);
+          if (known) this.log('Sonarr already has it:', known.title);
+        } catch (e) {
+          this.log('Sonarr not answering, notes written without it:', e.message);
+        }
+      }
+      const sonarr = !!known || wantsSonarr;
+      const qualityName = known ? await this.sonarrProfileNameOf(known.qualityProfileId, quality) : quality;
+
+      // Season notes first, so the series note can link them.
+      const seriesLink = `[[${noteName}]]`;
+      const seasonLinks = [];
+      for (const sn of series.seasons) {
+        const season = await this.seasonDetails(tmdbId, sn.number);
+        const svars = { ...vars, n: sn.number, year: season.year || series.year || '' };
+        const seasonName = L.safeFileName(L.fillTemplate(this.settings.seasonNoteNameTemplate, svars));
+        const seasonPath = normalizePath(noteFolder ? `${noteFolder}/${seasonName}.md` : `${seasonName}.md`);
+        const art = await this.fetchArt({ vars: svars, imageFolder, notePath: seasonPath }, season.poster, [], this.settings.seasonPosterTemplate, '');
+        const chosen = sonarr && (!Array.isArray(seasonNumbers) || seasonNumbers.includes(sn.number));
+        const fields = L.seasonNoteFields(season, seriesLink, art.links, {
+          tags: this.settings.seasonTags,
+          quality: chosen ? qualityName : undefined,
+          sonarr: chosen,
+        });
+        fields.season = sn.number;
+        const episodes = season.episodes.map((e) => ({ season: sn.number, ...e }));
+        const files = known ? await this.episodeFiles(known.id, sn.number) : {};
+        const body = L.seasonNoteBody(art.posterFile ? this.linkFor(art.posterFile, seasonPath, '') : '', episodes, files, (this.settings.player || '').trim());
+        await this.writeSeasonNote(seasonPath, fields, body, episodes, files);
+        seasonLinks.push(`[[${seasonName}]]`);
+      }
+      lap(`${seasonLinks.length} season note(s)`);
+
+      const fields = L.seriesNoteFields(series, links, {
+        tags: this.settings.seriesTags,
+        quality: sonarr ? qualityName : undefined,
+        sonarr,
+      });
+      const body = L.seriesNoteBody(posterFile ? this.linkFor(posterFile, notePath, '') : '', backdropLinks, seasonLinks);
+      const file = await this.writeMovieNote(notePath, fields, body, this.settings.seriesNoteOrder, this.settings.seriesNoteDefaults);
+      lap(`note ${file.path}`);
+
+      if (wantsSonarr) {
+        try {
+          const target = known || (await this.addToSonarr(series, quality));
+          const numbers = Array.isArray(seasonNumbers) ? seasonNumbers : series.seasons.map((x) => x.number);
+          let current = target;
+          for (const n of numbers) current = await this.downloadSeason(current, n);
+        } catch (e) {
+          this.log('Sonarr step failed:', e.message);
+          new Notice(`Notes written, but Sonarr said: ${e.message}`, 12000);
+        }
+      } else if (Array.isArray(seasonNumbers) && seasonNumbers.length && !this.sonarrConfigured()) {
+        this.log('Sonarr not configured; notes written without a download');
+      }
+
+      new Notice(`${series.title} (${series.year}) added, ${seasonLinks.length} season(s).`, 5000);
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file);
+      return file;
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+
+  async sonarrProfileNameOf(profileId, fallback) {
+    try {
+      const p = (await this.sonarrProfiles()).find((x) => x.id === profileId);
+      return p ? p.name : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  // A season note that exists keeps its properties and whatever is written
+  // around the episode block; only the block itself is replaced.
+  async writeSeasonNote(seasonPath, fields, body, episodes, files) {
+    const L = this.lib();
+    const existing = this.app.vault.getAbstractFileByPath(seasonPath);
+    if (existing instanceof TFile) {
+      await this.writeMovieNote(seasonPath, fields, '', this.settings.seasonNoteOrder, this.settings.seasonNoteDefaults);
+      await this.app.vault.process(existing, (text) => {
+        const m = text.match(/^---\n[\s\S]*?\n---\n?/);
+        const fm = m ? m[0] : '';
+        const rest = text.slice(fm.length);
+        return fm + L.replaceEpisodeList(rest, episodes, files, (this.settings.player || '').trim());
+      });
+      return existing;
+    }
+    return this.writeMovieNote(seasonPath, fields, body, this.settings.seasonNoteOrder, this.settings.seasonNoteDefaults);
+  }
+
+  // Sonarr's files for one season, keyed "season:episode" -> path.
+  async episodeFiles(seriesId, seasonNumber) {
+    const eps = await this.sonarr('GET', `/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}&includeEpisodeFile=true`);
+    const files = {};
+    for (const e of eps) {
+      if (e.hasFile && e.episodeFile && e.episodeFile.path) files[`${e.seasonNumber}:${e.episodeNumber}`] = e.episodeFile.path;
+    }
+    return files;
+  }
+
+  // "Download all seasons with Sonarr", on a series note.
+  async downloadSeriesNote(file) {
+    if (!this.sonarrConfigured()) {
+      new Notice('Sonarr is not configured. Run "Detect Sonarr" first.');
+      return;
+    }
+    const tmdbId = this.tmdbTvIdOf(file);
+    const series = await this.seriesDetails(tmdbId);
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+    const quality = String(fm.quality || this.settings.defaultQuality || '1080p');
+    let target = await this.addToSonarr(series, quality);
+    const qualityName = await this.sonarrProfileNameOf(target.qualityProfileId, quality);
+    await this.setFields(file, { quality: qualityName, 'dl-ed': false }, this.settings.seriesNoteOrder);
+    for (const sn of series.seasons) target = await this.downloadSeason(target, sn.number);
+    new Notice(`${series.title}: ${series.seasons.length} season(s) sent to Sonarr as ${qualityName}. Run "Check Sonarr for finished downloads" later.`, 8000);
+  }
+
+  // "Download this season with Sonarr", on a season note.
+  async downloadSeasonNote(file) {
+    if (!this.sonarrConfigured()) {
+      new Notice('Sonarr is not configured. Run "Detect Sonarr" first.');
+      return;
+    }
+    const season = this.seasonOf(file);
+    const series = await this.seriesDetails(season.tmdbId);
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+    const quality = String(fm.quality || this.settings.defaultQuality || '1080p');
+    const target = await this.addToSonarr(series, quality);
+    const qualityName = await this.sonarrProfileNameOf(target.qualityProfileId, quality);
+    await this.setFields(file, { quality: qualityName, 'dl-ed': false }, this.settings.seasonNoteOrder);
+    await this.downloadSeason(target, season.number);
+    new Notice(`${series.title} season ${season.number} sent to Sonarr as ${qualityName}. Run "Check Sonarr for finished downloads" later.`, 8000);
+  }
+
+  // "Check Sonarr for finished downloads": every season note not yet complete
+  // gets its episode links refreshed from Sonarr's files, subtitles for each
+  // new file, `dl-ed: true` once every aired episode has one; a series note
+  // turns `dl-ed: true` when all its season notes have. A command and nothing
+  // else, like the Radarr one.
+  async checkSonarr(manual) {
+    if (!this.sonarrConfigured()) {
+      if (manual) new Notice('Sonarr is not configured.');
+      return;
+    }
+    const seasonNotes = this.app.vault.getMarkdownFiles().filter((f) => {
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+      return fm && fm['dl-ed'] !== true && this.seasonOf(f);
+    });
+    if (!seasonNotes.length) {
+      this.log('Sonarr check: every season note is complete');
+      if (manual) new Notice('Every season note is already complete.');
+      return;
+    }
+    let all;
+    try {
+      await this.ensureSonarr();
+      all = await this.sonarr('GET', '/series');
+    } catch (e) {
+      this.log(`Sonarr check: not answering (${e.message}); ${seasonNotes.length} season note(s) still waiting`);
+      if (manual) new Notice(`Sonarr is not answering: ${e.message}`, 8000);
+      return;
+    }
+    const L = this.lib();
+    let completed = 0;
+    const touchedSeries = new Set();
+    // Remembered here rather than read back: the metadata cache lags a write
+    // by a moment, and the series check below runs in the same breath.
+    const completeNow = new Set();
+    for (const file of seasonNotes) {
+      const season = this.seasonOf(file);
+      const sonarrSeries = all.find((x) => x.tmdbId === season.tmdbId);
+      if (!sonarrSeries) {
+        this.log('no files, and Sonarr does not have the series:', file.path);
+        continue;
+      }
+      const eps = await this.sonarr('GET', `/episode?seriesId=${sonarrSeries.id}&seasonNumber=${season.number}&includeEpisodeFile=true`);
+      const files = {};
+      for (const e of eps) if (e.hasFile && e.episodeFile && e.episodeFile.path) files[`${e.seasonNumber}:${e.episodeNumber}`] = e.episodeFile.path;
+      const episodes = eps.map((e) => ({ season: e.seasonNumber, number: e.episodeNumber, title: e.title || `Episode ${e.episodeNumber}` }));
+      await this.app.vault.process(file, (text) => {
+        const m = text.match(/^---\n[\s\S]*?\n---\n?/);
+        const fm = m ? m[0] : '';
+        return fm + L.replaceEpisodeList(text.slice(fm.length), episodes, files, (this.settings.player || '').trim());
+      });
+      const have = Object.keys(files).length;
+      const today = new Date().toISOString().slice(0, 10);
+      const aired = eps.filter((e) => e.airDate && e.airDate <= today).length;
+      this.log(`${file.basename}: ${have} of ${aired} aired episode(s) have a file`);
+      for (const e of eps) {
+        const p = files[`${e.seasonNumber}:${e.episodeNumber}`];
+        if (p) await this.subtitlesForEpisode(p, sonarrSeries.imdbId, e.seasonNumber, e.episodeNumber, `${sonarrSeries.title} S${e.seasonNumber}E${e.episodeNumber}`).catch((err) => this.log('subtitles failed:', err.message));
+      }
+      if (aired > 0 && have >= aired) {
+        await this.setFields(file, { 'dl-ed': true }, this.settings.seasonNoteOrder);
+        completed++;
+        completeNow.add(file.path);
+        touchedSeries.add(season.seriesFile.path);
+      }
+    }
+    // A series is done when every one of its season notes is.
+    for (const seriesPath of touchedSeries) {
+      const seriesFile = this.app.vault.getAbstractFileByPath(seriesPath);
+      if (!(seriesFile instanceof TFile)) continue;
+      const siblings = this.app.vault.getMarkdownFiles().filter((f) => {
+        const so = this.seasonOf(f);
+        return so && so.seriesFile.path === seriesPath;
+      });
+      const done = siblings.every((f) => completeNow.has(f.path) || this.app.metadataCache.getFileCache(f)?.frontmatter?.['dl-ed'] === true);
+      if (done) {
+        await this.setFields(seriesFile, { 'dl-ed': true }, this.settings.seriesNoteOrder);
+        this.log('every season complete:', seriesFile.path);
+      }
+    }
+    this.log(`Sonarr check: ${seasonNotes.length} season note(s) looked at, ${completed} now complete`);
+    if (manual) new Notice(`${completed} of ${seasonNotes.length} season note(s) are now complete.`);
+  }
+
   /* ---------------- downloads ---------------- */
 
   async markDownloaded(file, moviePath) {
     const { fileLink } = this.lib();
-    await this.setFields(file, { 'dl-ed': true, file: fileLink(moviePath) });
+    await this.setFields(file, { 'dl-ed': true, file: fileLink(moviePath, (this.settings.player || '').trim()) });
     this.log('downloaded:', file.path, '->', moviePath);
   }
 
-  // Every film note still waiting on a file, asked about in one pass. Radarr
-  // not running is one log line, not an error per note.
+  // The command "Check Radarr for finished downloads": every film note without
+  // a file link, checked against Radarr's whole list in one request -- so a
+  // note written before the film landed, or without Radarr at all, gets its
+  // link. A command and nothing else: no timer, no run at startup. Something
+  // that runs by itself cannot be watched, and so cannot be tested.
   async checkDownloads(manual) {
     if (!this.radarrConfigured()) {
       if (manual) new Notice('Radarr is not configured.');
@@ -533,46 +1379,111 @@ class ArchRecreationsPlugin extends Plugin {
     }
     const waiting = this.app.vault.getMarkdownFiles().filter((f) => {
       const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-      return fm && fm['dl-ed'] === false && this.tmdbIdOf(f);
+      return fm && !fm.file && fm['dl-ed'] !== true && this.tmdbIdOf(f);
     });
     if (!waiting.length) {
-      this.log('download check: no film is waiting');
-      if (manual) new Notice('No film is waiting on a download.');
+      this.log('download check: every film note has its file');
+      if (manual) new Notice('Every film note already has its file.');
       return;
     }
     let movies;
     try {
+      await this.ensureRadarr();
       movies = await this.radarr('GET', '/movie');
     } catch (e) {
       this.log(`download check: Radarr not answering (${e.message}); ${waiting.length} note(s) still waiting`);
       if (manual) new Notice(`Radarr is not answering: ${e.message}`, 8000);
       return;
     }
-    const byTmdb = new Map(movies.map((m) => [m.tmdbId, m]));
+    let byTmdb = new Map(movies.map((m) => [m.tmdbId, m]));
+
+    // A file put in the library by hand is only known to Radarr after a
+    // rescan, and only for a film Radarr has. So: register the ones it lacks
+    // (unmonitored -- nothing is downloaded), rescan every film still without
+    // a file, then read the list again.
+    const rescan = [];
+    for (const file of waiting) {
+      const id = this.tmdbIdOf(file);
+      let m = byTmdb.get(id);
+      if (!m) {
+        try {
+          m = await this.registerInRadarr(id);
+          byTmdb.set(id, m);
+        } catch (e) {
+          this.log('could not register in Radarr:', file.path, e.message);
+          continue;
+        }
+      }
+      if (!m.hasFile) rescan.push(m.id);
+    }
+    if (rescan.length) {
+      this.log(`asking Radarr to rescan ${rescan.length} film folder(s) for files put there by hand`);
+      await this.radarrCommand({ name: 'RescanMovie', movieIds: rescan }).catch((e) => this.log('rescan failed:', e.message));
+      byTmdb = new Map((await this.radarr('GET', '/movie')).map((m) => [m.tmdbId, m]));
+    }
+
     let landed = 0;
     for (const file of waiting) {
       const id = this.tmdbIdOf(file);
       const m = byTmdb.get(id);
-      if (!m) {
-        this.log('waiting, but Radarr does not have it:', file.path);
-        continue;
-      }
+      if (!m) continue;
       if (!m.hasFile || !m.movieFile || !m.movieFile.path) {
-        this.log('still downloading:', file.path);
+        this.log(m.monitored ? 'still downloading:' : 'no file yet, folder watched:', file.path);
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+        // A note written without Radarr, for a film Radarr turns out to be
+        // fetching: say so on the note rather than leave it looking untouched.
+        if (m.monitored && fm['dl-ed'] === undefined) await this.setFields(file, { 'dl-ed': false });
         continue;
       }
       await this.markDownloaded(file, m.movieFile.path);
       landed++;
       await this.subtitlesFor(file, m).catch((e) => this.log('subtitles failed:', e.message));
     }
-    this.log(`download check: ${waiting.length} waiting, ${landed} landed`);
-    if (manual) new Notice(`${landed} of ${waiting.length} waiting film(s) landed.`);
+    this.log(`download check: ${waiting.length} without a file, ${landed} landed`);
+    if (manual) new Notice(`${landed} of ${waiting.length} film note(s) without a file got one.`);
+  }
+
+  // The command "Download this film with Radarr", for a note made without
+  // Radarr -- or with it unticked -- that is wanted after all. The note's own
+  // `quality` decides the profile; the default when it has none.
+  async downloadNote(file) {
+    if (!this.radarrConfigured()) {
+      new Notice('Radarr is not configured. Run "Detect Radarr" first.');
+      return;
+    }
+    const tmdbId = this.tmdbIdOf(file);
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+    const quality = String(fm.quality || this.settings.defaultQuality || '1080p');
+    const r = await this.addToRadarr(tmdbId, quality);
+    const qualityName = await this.profileNameOf(r.qualityProfileId, quality);
+    if (r.hasFile && r.movieFile && r.movieFile.path) {
+      await this.setFields(file, { quality: qualityName });
+      await this.markDownloaded(file, r.movieFile.path);
+      new Notice(`${r.title}: Radarr already has the file. Link written.`, 6000);
+      this.subtitlesFor(file, r).catch((e) => this.log('subtitles failed:', e.message));
+      return;
+    }
+    await this.setFields(file, { quality: qualityName, 'dl-ed': false });
+    // A film Radarr already had without a file: nothing was added, so nothing
+    // searched. Search now -- this is how a hand-off that failed because
+    // Transmission was not running is retried.
+    if (!r.monitored || !(r.addOptions && r.addOptions.searchForMovie)) {
+      if (!r.monitored) await this.radarr('PUT', `/movie/${r.id}`, { ...r, monitored: true });
+      const inQueue = (await this.radarr('GET', '/queue')).records.some((q) => q.movieId === r.id);
+      if (inQueue) {
+        this.log('already in Radarr\'s queue, not searched again:', r.title);
+      } else {
+        await this.searchAndGrab(r.id, r.title);
+      }
+    }
+    new Notice(`${r.title} sent to Radarr as ${qualityName}. Run "Check Radarr for finished downloads" later.`, 8000);
   }
 
   /* ---------------- subtitles ---------------- */
 
   async subtitlesForNote(file) {
     const id = this.tmdbIdOf(file);
+    await this.ensureRadarr();
     const m = await this.radarrMovieByTmdb(id);
     if (!m || !m.hasFile || !m.movieFile) {
       new Notice('Radarr has no file for this film yet.');
@@ -586,30 +1497,43 @@ class ArchRecreationsPlugin extends Plugin {
   // .srt beside the film. Skipped when it is already there, and put off when
   // the drive holding the film is not plugged in.
   async subtitlesFor(file, radarrMovie) {
+    const imdb = String(radarrMovie.imdbId || '').replace(/^tt/, '');
+    const query = imdb ? { imdb_id: imdb } : { tmdb_id: String(radarrMovie.tmdbId) };
+    return this.subtitleForFile(radarrMovie.movieFile.path, query, radarrMovie.title);
+  }
+
+  // An episode is found by the series' IMDb id plus season and episode
+  // number -- OpenSubtitles calls the series id `parent_imdb_id`.
+  async subtitlesForEpisode(path_, seriesImdbId, season, episode, label) {
+    const imdb = String(seriesImdbId || '').replace(/^tt/, '');
+    if (!imdb) {
+      this.log('subtitles skipped, no IMDb id for the series:', label);
+      return '';
+    }
+    return this.subtitleForFile(path_, { parent_imdb_id: imdb, season_number: String(season), episode_number: String(episode) }, label);
+  }
+
+  async subtitleForFile(moviePath, query, label) {
     const L = this.lib();
     const lang = (this.settings.subtitleLanguage || 'en').trim();
     if (!this.settings.openSubtitlesApiKey) {
       this.log('subtitles skipped, no OpenSubtitles key');
       return '';
     }
-    const moviePath = radarrMovie.movieFile.path;
     const target = L.subtitlePath(moviePath, lang);
     if (fs.existsSync(target)) {
       this.log('subtitles already there:', target);
       return target;
     }
     if (!fs.existsSync(moviePath)) {
-      this.log('subtitles put off, the film is not reachable (drive unplugged?):', moviePath);
+      this.log('subtitles put off, the file is not reachable (drive unplugged?):', moviePath);
       return '';
     }
-    const params = { languages: lang, moviehash: L.openSubtitlesHash(moviePath), order_by: 'download_count', order_direction: 'desc' };
-    const imdb = String(radarrMovie.imdbId || '').replace(/^tt/, '');
-    if (imdb) params.imdb_id = imdb;
-    else params.tmdb_id = String(radarrMovie.tmdbId);
+    const params = { ...query, languages: lang, moviehash: L.openSubtitlesHash(moviePath), order_by: 'download_count', order_direction: 'desc' };
     const found = await this.openSubtitles('GET', '/subtitles', params);
     const pick = L.pickSubtitle(found.data);
     if (!pick) {
-      this.log(`no ${lang} subtitles on OpenSubtitles for`, radarrMovie.title);
+      this.log(`no ${lang} subtitles on OpenSubtitles for`, label);
       return '';
     }
     this.log(`subtitle chosen: ${pick.release} (hash match ${pick.hashMatch}, HI ${pick.hearingImpaired}, ${pick.downloads} downloads)`);
@@ -721,6 +1645,151 @@ class AddMovieModal extends Modal {
   }
 }
 
+/* ---------------- add-series modal ---------------- */
+
+// Search, pick, then choose: which seasons to download (all ticked by
+// default), or none for notes and art only.
+class AddSeriesModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  async onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h3', { text: 'Add a series' });
+    const row = contentEl.createDiv();
+    row.style.display = 'flex';
+    row.style.gap = '6px';
+    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Scavengers Reign' });
+    input.style.flex = '1';
+    const searchBtn = row.createEl('button', { text: 'Search' });
+    const list = contentEl.createDiv();
+    list.style.marginTop = '10px';
+    list.style.maxHeight = '50vh';
+    list.style.overflowY = 'auto';
+
+    const run = async () => {
+      const q = input.value.trim();
+      if (!q) return;
+      list.empty();
+      list.createDiv({ text: 'Searching\u2026' });
+      let results;
+      try {
+        results = await this.plugin.searchSeries(q);
+      } catch (e) {
+        list.empty();
+        list.createDiv({ text: e.message });
+        return;
+      }
+      list.empty();
+      if (!results.length) {
+        list.createDiv({ text: 'Nothing found.' });
+        return;
+      }
+      for (const r of results) {
+        const item = list.createDiv();
+        item.style.padding = '6px 8px';
+        item.style.cursor = 'pointer';
+        item.style.borderBottom = '1px solid var(--background-modifier-border)';
+        item.createEl('strong', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
+        if (r.overview) {
+          const p = item.createDiv({ text: r.overview.length > 160 ? r.overview.slice(0, 157) + '\u2026' : r.overview });
+          p.style.fontSize = '0.85em';
+          p.style.opacity = '0.8';
+        }
+        item.addEventListener('click', () => this.chooseSeasons(r));
+      }
+    };
+    searchBtn.addEventListener('click', run);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      }
+    });
+    input.focus();
+  }
+
+  async chooseSeasons(r) {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h3', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
+    const info = contentEl.createDiv({ text: 'Loading seasons\u2026' });
+    let series;
+    try {
+      series = await this.plugin.seriesDetails(r.tmdbId);
+    } catch (e) {
+      info.setText(e.message);
+      return;
+    }
+    info.remove();
+
+    const sonarrOn = this.plugin.sonarrConfigured();
+    const top = contentEl.createDiv();
+    top.style.marginBottom = '8px';
+    const dl = top.createEl('label');
+    const dlBox = dl.createEl('input', { type: 'checkbox' });
+    dlBox.checked = sonarrOn;
+    dlBox.disabled = !sonarrOn;
+    dl.appendText(sonarrOn ? ' Download with Sonarr as ' : ' Sonarr not configured \u2014 notes and art only');
+    const quality = dl.createEl('select');
+    quality.disabled = !sonarrOn;
+    const fill = (names) => {
+      quality.empty();
+      for (const n of names) quality.createEl('option', { text: n, value: n });
+      quality.value = names.includes(this.plugin.settings.defaultQuality) ? this.plugin.settings.defaultQuality : names[0] || '';
+    };
+    fill([this.plugin.settings.defaultQuality || '1080p']);
+    if (sonarrOn) this.plugin.sonarrProfiles().then((p) => fill(p.map((x) => x.name))).catch(() => {});
+
+    const seasonsEl = contentEl.createDiv();
+    seasonsEl.style.margin = '8px 0';
+    const boxes = [];
+    const allRow = seasonsEl.createEl('label');
+    allRow.style.display = 'block';
+    const allBox = allRow.createEl('input', { type: 'checkbox' });
+    allBox.checked = true;
+    allRow.appendText(' All seasons');
+    for (const sn of series.seasons) {
+      const row = seasonsEl.createEl('label');
+      row.style.display = 'block';
+      row.style.marginLeft = '18px';
+      const box = row.createEl('input', { type: 'checkbox' });
+      box.checked = true;
+      row.appendText(` Season ${sn.number}${sn.year ? ` (${sn.year})` : ''} \u2014 ${sn.episodeCount} episode(s)`);
+      boxes.push({ box, number: sn.number });
+      box.addEventListener('change', () => {
+        allBox.checked = boxes.every((b) => b.box.checked);
+      });
+    }
+    allBox.addEventListener('change', () => {
+      for (const b of boxes) b.box.checked = allBox.checked;
+    });
+    const sync = () => {
+      const on = dlBox.checked;
+      allBox.disabled = !on;
+      for (const b of boxes) b.box.disabled = !on;
+    };
+    dlBox.addEventListener('change', sync);
+    sync();
+
+    const actions = contentEl.createDiv();
+    actions.style.marginTop = '10px';
+    const add = actions.createEl('button', { text: 'Add' });
+    add.addEventListener('click', () => {
+      const chosen = dlBox.checked ? boxes.filter((b) => b.box.checked).map((b) => b.number) : null;
+      this.close();
+      this.plugin.addSeries(r.tmdbId, quality.value, chosen).catch((e) => this.plugin.fail(e));
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 /* ---------------- settings ---------------- */
 
 class RecreationsSettingTab extends PluginSettingTab {
@@ -801,6 +1870,15 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
+      .setName('Seeder floors, highest first')
+      .setDesc('Comma-separated. Radarr\'s live search runs once; the highest floor with any release clears it wins, and the most-seeded release at that floor is grabbed. Radarr\'s own per-indexer minimum seeders still applies underneath, as a hard cutoff.')
+      .addText((t) =>
+        t.setPlaceholder(DEFAULT_SETTINGS.seederTiers).setValue(s.seederTiers).onChange(async (v) => {
+          s.seederTiers = v.trim() || DEFAULT_SETTINGS.seederTiers;
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
       .setName('Default quality')
       .setDesc('The Radarr quality profile pre-selected when adding a film; it is written to the note as `quality`.')
       .addText((t) =>
@@ -810,11 +1888,41 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Check for finished downloads every (minutes)')
-      .setDesc('Also checked when the vault opens. A film that landed gets `dl-ed: true`, a `file` link, and its subtitles.')
+      .setName('Open films in')
+      .setDesc('The app the note\'s file link opens the film in, e.g. VLC. Only that link is affected; double-clicking an .mp4 anywhere else still uses the system default. Empty for the system default.')
       .addText((t) =>
-        t.setValue(String(s.checkMinutes)).onChange(async (v) => {
-          s.checkMinutes = Math.max(1, Number(v) || 10);
+        t.setPlaceholder('VLC').setValue(s.player).onChange(async (v) => {
+          s.player = v.trim();
+          await this.save();
+        })
+      );
+
+    containerEl.createEl('h3', { text: 'Sonarr' });
+    new Setting(containerEl)
+      .setName('Detect Sonarr')
+      .setDesc('Reads the address and API key from Sonarr\'s own config file and asks it for the library folder and quality profiles.')
+      .addButton((b) => b.setButtonText('Detect').onClick(async () => {
+        await this.plugin.detectSonarr(true);
+        this.display();
+      }));
+    new Setting(containerEl).setName('Sonarr address').addText((t) =>
+      t.setPlaceholder('http://localhost:8989').setValue(s.sonarrUrl).onChange(async (v) => {
+        s.sonarrUrl = v.trim();
+        await this.save();
+      })
+    );
+    new Setting(containerEl).setName('Sonarr API key').addText((t) =>
+      t.setValue(s.sonarrApiKey).onChange(async (v) => {
+        s.sonarrApiKey = v.trim();
+        await this.save();
+      })
+    );
+    new Setting(containerEl)
+      .setName('Sonarr library folder')
+      .setDesc('Where Sonarr puts finished episodes, one folder per series with a folder per season.')
+      .addText((t) =>
+        t.setValue(s.sonarrRootFolder).onChange(async (v) => {
+          s.sonarrRootFolder = v.trim();
           await this.save();
         })
       );
@@ -856,8 +1964,43 @@ class RecreationsSettingTab extends PluginSettingTab {
         );
     }
     new Setting(containerEl)
+      .setName('Series note location')
+      .setDesc('Series notes and their season notes go together. Same folder and subfolder are relative to the note that is open when you add a series.')
+      .addDropdown((d) =>
+        d
+          .addOption('vault', 'Vault folder')
+          .addOption('same', 'Same folder as the open note')
+          .addOption('subfolder', 'In subfolder under the open note')
+          .addOption('specified', 'In the folder specified below')
+          .setValue(s.seriesLocationMode || 'specified')
+          .onChange(async (v) => {
+            s.seriesLocationMode = v;
+            await this.save();
+            this.display();
+          })
+      );
+    if ((s.seriesLocationMode || 'specified') === 'subfolder') {
+      new Setting(containerEl).setName('Series note subfolder name').addText((t) =>
+        t.setValue(s.seriesSubfolder).onChange(async (v) => {
+          s.seriesSubfolder = v.trim() || 'Series';
+          await this.save();
+        })
+      );
+    }
+    if ((s.seriesLocationMode || 'specified') === 'specified') {
+      new Setting(containerEl)
+        .setName('Series note folder')
+        .setDesc('Path from the vault root.')
+        .addText((t) =>
+          t.setValue(s.seriesFolder).onChange(async (v) => {
+            s.seriesFolder = v.trim();
+            await this.save();
+          })
+        );
+    }
+    new Setting(containerEl)
       .setName('Art location')
-      .setDesc('Where the poster, banner and stills go. Same folder and subfolder are relative to the film note.')
+      .setDesc('Where the poster and backdrops go. Same folder and subfolder are relative to the film note.')
       .addDropdown((d) =>
         d
           .addOption('vault', 'Vault folder')
@@ -902,8 +2045,8 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Poster, banner and still file names')
-      .setDesc('Placeholders: {{title}}, {{year}}, and {{n}} for the still number. Saved as WebP.')
+      .setName('Poster and backdrop file names')
+      .setDesc('Placeholders: {{title}}, {{year}}, and {{n}} for the backdrop number (01, 02, …). Saved as WebP. The banner property links the first backdrop.')
       .addText((t) =>
         t.setPlaceholder(DEFAULT_SETTINGS.posterTemplate).setValue(s.posterTemplate).onChange(async (v) => {
           s.posterTemplate = v.trim() || DEFAULT_SETTINGS.posterTemplate;
@@ -911,14 +2054,8 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       )
       .addText((t) =>
-        t.setPlaceholder(DEFAULT_SETTINGS.bannerTemplate).setValue(s.bannerTemplate).onChange(async (v) => {
-          s.bannerTemplate = v.trim() || DEFAULT_SETTINGS.bannerTemplate;
-          await this.save();
-        })
-      )
-      .addText((t) =>
-        t.setPlaceholder(DEFAULT_SETTINGS.stillTemplate).setValue(s.stillTemplate).onChange(async (v) => {
-          s.stillTemplate = v.trim() || DEFAULT_SETTINGS.stillTemplate;
+        t.setPlaceholder(DEFAULT_SETTINGS.backdropTemplate).setValue(s.backdropTemplate).onChange(async (v) => {
+          s.backdropTemplate = v.trim() || DEFAULT_SETTINGS.backdropTemplate;
           await this.save();
         })
       );
@@ -938,11 +2075,11 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Stills per film')
-      .setDesc('Frames from the film, embedded in the note body as a wall. TMDB\'s most-voted backdrop becomes the banner; the stills are the ones after it. 0 for none.')
+      .setName('Backdrops per film')
+      .setDesc('TMDB\'s backdrops, most voted first — key art and frames from the film — embedded in the note body as a wall. The first one is also the banner.')
       .addText((t) =>
-        t.setValue(String(s.stillsCount)).onChange(async (v) => {
-          s.stillsCount = Math.max(0, Math.floor(Number(v) || 0));
+        t.setValue(String(s.backdropsCount)).onChange(async (v) => {
+          s.backdropsCount = Math.max(1, Math.floor(Number(v) || 1));
           await this.save();
         })
       );
@@ -974,6 +2111,75 @@ class RecreationsSettingTab extends PluginSettingTab {
           await this.save();
         })
       );
+    containerEl.createEl('h3', { text: 'Series and season notes' });
+    new Setting(containerEl)
+      .setName('Season note and poster names')
+      .setDesc('Placeholders: {{title}}, {{year}} (the season\'s first-aired year), {{n}} the season number. The series note itself uses the film note name.')
+      .addText((t) =>
+        t.setPlaceholder(DEFAULT_SETTINGS.seasonNoteNameTemplate).setValue(s.seasonNoteNameTemplate).onChange(async (v) => {
+          s.seasonNoteNameTemplate = v.trim() || DEFAULT_SETTINGS.seasonNoteNameTemplate;
+          await this.save();
+        })
+      )
+      .addText((t) =>
+        t.setPlaceholder(DEFAULT_SETTINGS.seasonPosterTemplate).setValue(s.seasonPosterTemplate).onChange(async (v) => {
+          s.seasonPosterTemplate = v.trim() || DEFAULT_SETTINGS.seasonPosterTemplate;
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('Series and season tags')
+      .setDesc('Comma-separated, one box each. A nested tag such as series/season keeps seasons under series in tag searches.')
+      .addText((t) =>
+        t.setPlaceholder('series').setValue((s.seriesTags || []).join(', ')).onChange(async (v) => {
+          s.seriesTags = this.plugin.lib().splitList(v);
+          await this.save();
+        })
+      )
+      .addText((t) =>
+        t.setPlaceholder('series/season').setValue((s.seasonTags || []).join(', ')).onChange(async (v) => {
+          s.seasonTags = this.plugin.lib().splitList(v);
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('Series note property order')
+      .setDesc('Same rule as the film order: listed properties are written in this order, an own one left out is not written, hand-added ones are kept.')
+      .addTextArea((t) => {
+        t.inputEl.rows = 2;
+        t.inputEl.style.width = '100%';
+        t.setValue(s.seriesNoteOrder).onChange(async (v) => {
+          s.seriesNoteOrder = v;
+          await this.save();
+        });
+      });
+    new Setting(containerEl).setName('Season note property order').addTextArea((t) => {
+      t.inputEl.rows = 2;
+      t.inputEl.style.width = '100%';
+      t.setValue(s.seasonNoteOrder).onChange(async (v) => {
+        s.seasonNoteOrder = v;
+        await this.save();
+      });
+    });
+    new Setting(containerEl)
+      .setName('Series and season default properties')
+      .setDesc('"key: value" per line, one box each. Written on every new note; a value already on a note is never changed.')
+      .addTextArea((t) => {
+        t.inputEl.rows = 3;
+        t.setValue(s.seriesNoteDefaults).onChange(async (v) => {
+          s.seriesNoteDefaults = v;
+          await this.save();
+        });
+      })
+      .addTextArea((t) => {
+        t.inputEl.rows = 3;
+        t.setValue(s.seasonNoteDefaults).onChange(async (v) => {
+          s.seasonNoteDefaults = v;
+          await this.save();
+        });
+      });
+
+    containerEl.createEl('h3', { text: 'Film notes' });
     new Setting(containerEl)
       .setName('Property order')
       .setDesc('Comma-separated. Listed properties are written in this order; one of the plugin\'s own left out is not written at all. Anything you add to a note by hand is always kept.')
