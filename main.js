@@ -116,9 +116,24 @@ class ArchRecreationsPlugin extends Plugin {
     });
     this.addCommand({ id: 'detect-sonarr', name: 'Detect Sonarr', callback: () => this.detectSonarr(true) });
     this.addCommand({
+      id: 'import-series',
+      name: 'Import existing series from Sonarr',
+      callback: () => this.importExistingSeries(true).catch((e) => this.fail(e)),
+    });
+    this.addCommand({
       id: 'check-downloads',
       name: 'Check Radarr for finished downloads',
       callback: () => this.checkDownloads(true),
+    });
+    this.addCommand({
+      id: 'import-movies',
+      name: 'Import existing films from Radarr',
+      callback: () => this.importExistingMovies(true).catch((e) => this.fail(e)),
+    });
+    this.addCommand({
+      id: 'import-films-from-disk',
+      name: 'Import films from the library folder',
+      callback: () => this.importFilmsFromDisk(true).catch((e) => this.fail(e)),
     });
     this.addCommand({
       id: 'subtitles-for-note',
@@ -709,8 +724,13 @@ class ArchRecreationsPlugin extends Plugin {
 
   // Registers a film with Radarr without downloading it -- unmonitored, no
   // search -- so a file put in its library folder by hand is adopted on the
-  // next rescan. That is how a manual 4K download gets its link.
-  async registerInRadarr(tmdbId) {
+  // next rescan. That is how a manual 4K download gets its link. `knownPath`
+  // pins the movie to a folder that already exists under a name Radarr would
+  // not have generated itself -- the usual case for a film that predates
+  // this plugin -- so the rescan looks in the right place instead of the
+  // empty folder Radarr's own naming format would have produced from the
+  // title alone.
+  async registerInRadarr(tmdbId, knownPath) {
     let root = this.settings.radarrRootFolder;
     if (!root) {
       const roots = await this.radarr('GET', '/rootfolder');
@@ -720,14 +740,16 @@ class ArchRecreationsPlugin extends Plugin {
     const profiles = await this.radarrProfiles();
     const profile = profiles.find((p) => p.name.toLowerCase() === String(this.settings.defaultQuality).toLowerCase()) || profiles[0];
     if (!profile) throw new Error('Radarr has no quality profile.');
-    const added = await this.radarr('POST', '/movie', {
+    const body = {
       tmdbId,
       qualityProfileId: profile.id,
       rootFolderPath: root,
       monitored: false,
       minimumAvailability: 'released',
       addOptions: { searchForMovie: false },
-    });
+    };
+    if (knownPath) body.path = knownPath;
+    const added = await this.radarr('POST', '/movie', body);
     this.log('registered in Radarr, unmonitored, so its folder is watched:', added.title, '->', added.path);
     return added;
   }
@@ -935,7 +957,8 @@ class ArchRecreationsPlugin extends Plugin {
 
   // The whole thing for one film: details, art, note, Radarr. Each step logs
   // what it decided so a run can be read back.
-  async addMovie(tmdbId, quality, sendToRadarr) {
+  async addMovie(tmdbId, quality, sendToRadarr, opts = {}) {
+    const open = opts.open !== false;
     const key = `tmdb:${tmdbId}`;
     if (this.inFlight.has(key)) {
       new Notice('That film is already being added.');
@@ -1006,9 +1029,11 @@ class ArchRecreationsPlugin extends Plugin {
         this.subtitlesFor(file, known).catch((e) => this.log('subtitles failed:', e.message));
       }
 
-      new Notice(`${movie.title} (${movie.year}) added.`, 5000);
-      const leaf = this.app.workspace.getLeaf(false);
-      await leaf.openFile(file);
+      if (open) {
+        new Notice(`${movie.title} (${movie.year}) added.`, 5000);
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+      }
       return file;
     } finally {
       this.inFlight.delete(key);
@@ -1102,7 +1127,8 @@ class ArchRecreationsPlugin extends Plugin {
   // The whole thing for one series: details, art, the series note, one note
   // per season with its own poster and episode list, then Sonarr for the
   // seasons chosen. `seasonNumbers` is null for notes only.
-  async addSeries(tmdbId, quality, seasonNumbers) {
+  async addSeries(tmdbId, quality, seasonNumbers, opts = {}) {
+    const open = opts.open !== false;
     const key = `tv:${tmdbId}`;
     if (this.inFlight.has(key)) {
       new Notice('That series is already being added.');
@@ -1197,9 +1223,11 @@ class ArchRecreationsPlugin extends Plugin {
         this.log('Sonarr not configured; notes written without a download');
       }
 
-      new Notice(`${series.title} (${series.year}) added, ${seasonLinks.length} season(s).`, 5000);
-      const leaf = this.app.workspace.getLeaf(false);
-      await leaf.openFile(file);
+      if (open) {
+        new Notice(`${series.title} (${series.year}) added, ${seasonLinks.length} season(s).`, 5000);
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+      }
       return file;
     } finally {
       this.inFlight.delete(key);
@@ -1360,6 +1388,47 @@ class ArchRecreationsPlugin extends Plugin {
     if (manual) new Notice(`${completed} of ${seasonNotes.length} season note(s) are now complete.`);
   }
 
+  // "Import existing series from Sonarr": one series note plus one season note
+  // per season for every series Sonarr already holds and that has no note yet,
+  // carrying whatever episode files Sonarr already has. `seasonNumbers: null`
+  // means notes only -- nothing new is sent to Sonarr, exactly like unticking
+  // every season in "Add a series".
+  async importExistingSeries(manual) {
+    if (!this.sonarrConfigured()) {
+      if (manual) new Notice('Sonarr is not configured.');
+      return;
+    }
+    let series;
+    try {
+      await this.ensureSonarr();
+      series = await this.sonarr('GET', '/series');
+    } catch (e) {
+      this.log('import series: Sonarr not answering:', e.message);
+      if (manual) new Notice(`Sonarr is not answering: ${e.message}`, 8000);
+      return;
+    }
+    const known = new Set(this.app.vault.getMarkdownFiles().map((f) => this.tmdbTvIdOf(f)).filter(Boolean));
+    const missing = series.filter((s) => s.tmdbId && !known.has(s.tmdbId));
+    if (!missing.length) {
+      this.log('import series: every series in Sonarr already has a note');
+      if (manual) new Notice('Every series in Sonarr already has a note.');
+      return;
+    }
+    this.log(`import series: ${missing.length} series in Sonarr without a note`);
+    let made = 0;
+    for (const s of missing) {
+      try {
+        const quality = await this.sonarrProfileNameOf(s.qualityProfileId, this.settings.defaultQuality);
+        await this.addSeries(s.tmdbId, quality, null, { open: false });
+        made++;
+      } catch (e) {
+        this.log('import failed:', s.title, e.message);
+      }
+    }
+    this.log(`import series: ${made} of ${missing.length} note(s) written`);
+    if (manual) new Notice(`${made} of ${missing.length} series note(s) written.`, 8000);
+  }
+
   /* ---------------- downloads ---------------- */
 
   async markDownloaded(file, moviePath) {
@@ -1442,6 +1511,141 @@ class ArchRecreationsPlugin extends Plugin {
     }
     this.log(`download check: ${waiting.length} without a file, ${landed} landed`);
     if (manual) new Notice(`${landed} of ${waiting.length} film note(s) without a file got one.`);
+  }
+
+  // "Import existing films from Radarr": one note for every film Radarr
+  // already holds and that has no note yet, written the way "Add a film"
+  // would with the box unticked -- Radarr is only ever asked what it already
+  // has, so nothing new is downloaded. A film still fetching gets its note
+  // without a file link; "Check Radarr for finished downloads" catches it up
+  // once it lands.
+  async importExistingMovies(manual) {
+    if (!this.radarrConfigured()) {
+      if (manual) new Notice('Radarr is not configured.');
+      return;
+    }
+    let movies;
+    try {
+      await this.ensureRadarr();
+      movies = await this.radarr('GET', '/movie');
+    } catch (e) {
+      this.log('import films: Radarr not answering:', e.message);
+      if (manual) new Notice(`Radarr is not answering: ${e.message}`, 8000);
+      return;
+    }
+    const known = new Set(this.app.vault.getMarkdownFiles().map((f) => this.tmdbIdOf(f)).filter(Boolean));
+    const missing = movies.filter((m) => m.tmdbId && !known.has(m.tmdbId));
+    if (!missing.length) {
+      this.log('import films: every film in Radarr already has a note');
+      if (manual) new Notice('Every film in Radarr already has a note.');
+      return;
+    }
+    this.log(`import films: ${missing.length} film(s) in Radarr without a note`);
+    let made = 0;
+    for (const m of missing) {
+      try {
+        const quality = await this.profileNameOf(m.qualityProfileId, this.settings.defaultQuality);
+        await this.addMovie(m.tmdbId, quality, false, { open: false });
+        made++;
+      } catch (e) {
+        this.log('import failed:', m.title, e.message);
+      }
+    }
+    this.log(`import films: ${made} of ${missing.length} note(s) written`);
+    if (manual) new Notice(`${made} of ${missing.length} film note(s) written.`, 8000);
+  }
+
+  // "Import films from the library folder": for every folder shaped
+  // "Title (Year)" directly under Radarr's library folder that Radarr does
+  // not have yet -- a film dropped there by hand, from before this plugin or
+  // from outside it entirely -- looks the title up on TMDB and writes its
+  // note. "Check Radarr for finished downloads", run once at the end here, is
+  // what registers the folder with Radarr and adds the file link, exactly as
+  // it already does for a manually placed 4K download.
+  async importFilmsFromDisk(manual) {
+    if (this.inFlight.has('import-films-from-disk')) {
+      new Notice('Already importing films from the library folder.');
+      return;
+    }
+    this.inFlight.add('import-films-from-disk');
+    try {
+      if (!this.radarrConfigured()) {
+        if (manual) new Notice('Radarr is not configured.');
+        return;
+      }
+      let movies;
+      try {
+        await this.ensureRadarr();
+        movies = await this.radarr('GET', '/movie');
+      } catch (e) {
+        this.log('import from disk: Radarr not answering:', e.message);
+        if (manual) new Notice(`Radarr is not answering: ${e.message}`, 8000);
+        return;
+      }
+      let root = this.settings.radarrRootFolder;
+      if (!root) {
+        const roots = await this.radarr('GET', '/rootfolder');
+        root = roots.length ? roots[0].path : '';
+      }
+      if (!root || !fs.existsSync(root)) {
+        this.log('import from disk: library folder not reachable:', root || '(none set)');
+        if (manual) new Notice(`The library folder isn't reachable: ${root || '(none set)'}`, 8000);
+        return;
+      }
+      const byTmdb = new Map(movies.map((m) => [m.tmdbId, m]));
+      const knownPaths = new Set(movies.map((m) => path.normalize(m.path)));
+      const knownNotes = new Set(this.app.vault.getMarkdownFiles().map((f) => this.tmdbIdOf(f)).filter(Boolean));
+      const entries = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.'));
+      let made = 0;
+      const skipped = [];
+      for (const d of entries) {
+        const full = path.normalize(path.join(root, d.name));
+        if (knownPaths.has(full)) continue;
+        const m = d.name.match(/^(.+?)\s*\((\d{4})\)$/);
+        if (!m) {
+          this.log('import from disk: not a "Title (Year)" folder, skipped:', d.name);
+          skipped.push(d.name);
+          continue;
+        }
+        const [, title, year] = m;
+        try {
+          const results = await this.searchMovies(title);
+          const hit = results.find((r) => r.year === year) || results[0];
+          if (!hit) {
+            this.log('import from disk: no TMDB match, skipped:', d.name);
+            skipped.push(d.name);
+            continue;
+          }
+          if (knownNotes.has(hit.tmdbId)) continue;
+          // Radarr's own naming format would sanitise the title differently
+          // than however this folder actually got named (a colon in the
+          // title becoming " -", say), so the folder is pinned explicitly
+          // rather than left for Radarr to guess -- otherwise the rescan
+          // below looks in a folder that doesn't exist and never finds the
+          // file.
+          if (!byTmdb.has(hit.tmdbId)) {
+            const registered = await this.registerInRadarr(hit.tmdbId, full);
+            byTmdb.set(hit.tmdbId, registered);
+          }
+          await this.addMovie(hit.tmdbId, this.settings.defaultQuality, false, { open: false });
+          knownNotes.add(hit.tmdbId);
+          made++;
+        } catch (e) {
+          this.log('import from disk failed:', d.name, e.message);
+          skipped.push(d.name);
+        }
+      }
+      if (made) await this.checkDownloads(false);
+      this.log(`import from disk: ${made} note(s) written${skipped.length ? `, skipped: ${skipped.join(', ')}` : ''}`);
+      if (manual) {
+        new Notice(
+          `${made} film note(s) written.${skipped.length ? ` ${skipped.length} folder(s) skipped -- see the console.` : ''}`,
+          8000
+        );
+      }
+    } finally {
+      this.inFlight.delete('import-films-from-disk');
+    }
   }
 
   // The command "Download this film with Radarr", for a note made without
