@@ -63,8 +63,8 @@ const DEFAULT_SETTINGS = {
   seasonPosterTemplate: '{{title}} \u2013 Season {{n}} ({{year}})',
   seriesTags: ['series'],
   seasonTags: ['series/season'],
-  seriesNoteOrder: 'dl-ed, watched, rank, banner-p, seasons, year, quality, URL, poster, banner, genres, creator, actors, tags',
-  seasonNoteOrder: 'dl-ed, watched, rank, season, episodes, year, quality, series, poster, tags',
+  seriesNoteOrder: 'dl-ed, watched, rank, banner-p, year, quality, URL, poster, banner, genres, creator, actors, seasons, tags',
+  seasonNoteOrder: 'dl-ed, watched, rank, season, episodes, year, quality, poster, series, tags',
   seriesNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
   seasonNoteDefaults: 'watched: false\nrank: 0',
   // Listed keys are written in this order; an own key left out is not
