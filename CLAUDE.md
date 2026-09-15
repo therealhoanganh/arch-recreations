@@ -272,6 +272,64 @@ Subtitles for twelve episodes cost twelve of the day's hundred OpenSubtitles
 downloads; a long series will run out and pick up the next day, which is what
 "put off" in the log means.
 
+## Bringing an existing library in
+
+Three commands write notes for what's already there rather than for
+something new: **Import existing films from Radarr** and **Import existing
+series from Sonarr** walk what those apps already track and write a note
+(with its Open link, if a file is there) for anything missing one --
+`addMovie`/`addSeries` called with `sendToRadarr`/`seasonNumbers` false/null,
+`{ open: false }` so a bulk run doesn't flip through a tab per item. **Import
+films from the library folder** goes one step further: it reads every root
+folder Radarr knows about (not just the one in settings) and, for a
+subfolder shaped `Title (Year)` that Radarr has never seen, looks the title
+up on TMDB and writes its note too.
+
+That command is also why `registerInRadarr(tmdbId, knownPath, qualityName)`
+takes a real folder path now. Radarr's own naming format sanitises a title
+differently than however a folder already got named by hand -- a colon
+becomes " -", so `Star Wars: Episode I - The Phantom Menace` (Radarr's own
+choice) didn't match `Star Wars Episode I The Phantom Menace (1999)` (the
+folder actually on disk). Registering with the generated name meant the
+rescan afterward looked in a folder that didn't exist and never found the
+file -- three Star Wars notes sat with no Open link until this was caught
+and the existing Radarr entries were repointed by hand. `knownPath` is set
+whenever the folder is already known (never left for Radarr to guess), and
+`qualityName` is passed explicitly too, for the same reason: leaving it out
+silently registers everything under the global default quality regardless
+of which root folder -- and so which real quality -- it came from.
+
+A folder Radarr already tracks under a *different* copy (a 4K rip of a film
+already held at 1080p, found while scanning a second root) is skipped with a
+log line rather than registered -- Radarr holds one entry per film, so
+registering again would silently take over the existing entry's file and
+quality. That note gets written by hand instead: `movieDetails`, `fetchArt`,
+`movieNoteFields`/`movieNoteBody`, `writeMovieNote`, then `markDownloaded`
+with the real file path -- the same pieces `addMovie` uses, run directly, with
+the existing Radarr entry (same TMDB id, so the same IMDb id) good enough for
+the subtitle lookup. Dunkirk's 4K copy went in this way.
+
+## 4K: a second root folder, not a name in the note
+
+The user tried a "4K" prefix on the note's name first and changed his mind --
+a subfolder instead, the note's own name untouched. `resolveMovieFolder` and
+`resolveSeriesFolder` both take the quality name now and append a `4K`
+subfolder when it's exactly that string (case-insensitively): `Movies/4K`,
+`Series/4K` by default. Wherever a quality name is already known when the
+note is written -- the *Add a film*/*Add a series* dropdowns, both `import
+existing …` commands (they read the real profile per item off Radarr/Sonarr)
+-- a 4K item lands there on its own.
+
+On disk, this is `/Volumes/4T-HDD/4K`, registered as an *additional* root
+folder in both Radarr and Sonarr (not a replacement for `Movies`/`Series`) --
+the user keeps 4K rips there regardless of whether they turn out to be a
+film or a series. `importFilmsFromDisk` scans every root Radarr has, and a
+root folder whose name is exactly `4K` gets its films the `4K` quality
+instead of the settings default, so a plain `Title (Year)` folder dropped
+there is picked up and correctly labelled with no further steps. There is no
+equivalent for series yet -- nothing has needed it -- but the same idea
+(`resolveSeriesFolder` already takes the quality) is what it would extend.
+
 ## Environment it was built against
 
 macOS Intel, Obsidian 1.13. Radarr 6.3 at `localhost:7878`, Prowlarr 2.5 at
