@@ -330,6 +330,56 @@ there is picked up and correctly labelled with no further steps. There is no
 equivalent for series yet -- nothing has needed it -- but the same idea
 (`resolveSeriesFolder` already takes the quality) is what it would extend.
 
+Adding a 4K title also *downloads* it there: `rootFor(app, qualityName)`
+returns the root folder named `4K` when the quality is 4K and the app has
+one, and the settings library folder otherwise. Both `addToRadarr` and
+`addToSonarr` go through it. Without a `4K` root it falls back to the main
+library and says so in the log rather than failing.
+
+## What "4K" grabs, and why the rule is a rule
+
+The seeder cascade suits 1080p, where sizes are close enough that most-seeded
+is simply best. At 2160p the same release exists at 5 GB and at 58 GB, so the
+user asked for the smallest -- but only among releases seeded well enough to
+actually finish. `pick4KRelease` is that: releases with at least
+`fourKEnoughSeeders` (50) behind them, smallest first, an HDR one before one
+without; and if nothing is that well seeded, the ordinary cascade over what
+is left. He chose 50 from watching his own downloads.
+
+`unfit4K` is the filter, and every rule in it has a reason on this machine:
+
+- **not 2160p** -- the 4K profiles in both apps allow 1080p as a fallback,
+  which is right for the profile but wrong for a note filed under `4K`.
+- **AV1** -- the MacBookPro16,2 (10th-gen Intel, Iris Plus) decodes HEVC in
+  hardware and AV1 not at all; 4K AV1 stutters in VLC.
+- **remux** -- tens of gigabytes for a picture usually watched on a 13"
+  non-HDR screen. (The HDR monitor and the TV come second and third.)
+- **Dolby Vision with no HDR in the name** -- profile 5, which VLC renders
+  purple and green. `DV HDR` carries an HDR10 fallback and is fine, so the
+  test is "DV present *and* HDR absent", not "DV present".
+
+The names are matched on the release *title*, and The Pirate Bay truncates
+them mid-word (`… DDP5 1 DV HDR H 2`), so the codec can never be *required*
+by name -- only ruled out when it is stated. Resolution comes from Radarr and
+Sonarr's own parse instead, which is reliable.
+
+A season takes **packs only** when any fit pack exists. Two reasons: the user
+wants one release group across the season, and `searchAndGrabSeason` grabs a
+single release -- so a single-episode release winning the pick would have
+quietly fetched one episode and called the season done. That gap had never
+shown because every season tried before had a pack at a high floor.
+
+Minimum size is deliberately *not* in the plugin. Radarr and Sonarr already
+reject a too-small release through their quality definitions' minimum MB per
+minute (30 for WEBDL-2160p here), which scales to runtime on its own.
+
+**Sonarr answers a release search for a brand-new series with an empty list.**
+It fetches the episode list in the background after `POST /series`, and until
+that lands, `/release?seriesId&seasonNumber` returns `[]` immediately -- not
+an error, so it looks exactly like "nothing was found". *Alien: Earth* was
+added and grabbed nothing for this reason; `waitForSeason` now polls
+`/episode` for up to a minute before searching.
+
 ## Environment it was built against
 
 macOS Intel, Obsidian 1.13. Radarr 6.3 at `localhost:7878`, Prowlarr 2.5 at

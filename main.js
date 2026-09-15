@@ -29,6 +29,11 @@ const DEFAULT_SETTINGS = {
   // stays underneath this as a hard floor -- a release below it never
   // appears in the list at all.
   seederTiers: '1000, 500, 200, 100, 50, 20, 10',
+  // At the "4K" quality profile, size comes first: among releases with at
+  // least this many seeders, the smallest is grabbed. Fewer than this and
+  // the floors above decide instead, since a thinly seeded file takes
+  // forever however small it is.
+  fourKEnoughSeeders: 50,
   // The app the note's file link opens the film in. Only that link is
   // affected; the system default for .mp4 stays what it is. Empty for the
   // system default.
@@ -489,6 +494,24 @@ class ArchRecreationsPlugin extends Plugin {
     return (await this.sonarr('GET', '/qualityprofile')).map((p) => ({ id: p.id, name: p.name }));
   }
 
+  // Where a new download lands: at the "4K" profile, the app's root folder
+  // named "4K" when it has one (/Volumes/4T-HDD/4K, shared by both apps), so
+  // 4K rips sit apart on the drive as their notes do in the vault; otherwise
+  // the library folder from settings, or the app's first root folder.
+  async rootFor(app, qualityName) {
+    const call = app === 'radarr' ? this.radarr.bind(this) : this.sonarr.bind(this);
+    const setting = app === 'radarr' ? this.settings.radarrRootFolder : this.settings.sonarrRootFolder;
+    const roots = await call('GET', '/rootfolder');
+    if (String(qualityName || '').toLowerCase() === '4k') {
+      const fourK = roots.find((r) => path.basename(r.path).toLowerCase() === '4k');
+      if (fourK) return fourK.path;
+      this.log(`${app} has no root folder named 4K; this 4K title goes to the main library`);
+    }
+    const root = setting || (roots.length ? roots[0].path : '');
+    if (!root) throw new Error(`${app === 'radarr' ? 'Radarr' : 'Sonarr'} has no library folder set.`);
+    return root;
+  }
+
   // Sonarr's series carry both ids; TMDB's is what the note holds.
   async sonarrSeriesByTmdb(tmdbId, tvdbId) {
     const all = await this.sonarr('GET', '/series');
@@ -509,12 +532,7 @@ class ArchRecreationsPlugin extends Plugin {
     const profiles = await this.sonarrProfiles();
     const profile = profiles.find((p) => p.name.toLowerCase() === String(qualityName || '').toLowerCase());
     if (!profile) throw new Error(`Sonarr has no quality profile named "${qualityName}". It has: ${profiles.map((p) => p.name).join(', ')}.`);
-    let root = this.settings.sonarrRootFolder;
-    if (!root) {
-      const roots = await this.sonarr('GET', '/rootfolder');
-      root = roots.length ? roots[0].path : '';
-      if (!root) throw new Error('Sonarr has no library folder set.');
-    }
+    const root = await this.rootFor('sonarr', qualityName);
     const found = await this.sonarr('GET', `/series/lookup?term=${encodeURIComponent('tvdb:' + series.tvdbId)}`);
     if (!found || !found.length) throw new Error(`Sonarr could not find tvdb:${series.tvdbId}.`);
     const body = {
@@ -564,8 +582,26 @@ class ArchRecreationsPlugin extends Plugin {
 
   // The season search: packs and single episodes together, the cascade
   // preferring a pack inside a tier so the season is one torrent.
+  // A series added a moment ago has no episode list yet -- Sonarr fetches it
+  // in the background -- and a release search for a season it does not know
+  // returns an empty list straight away rather than an error. Waiting for the
+  // season to appear is what makes the first search of a new series work.
+  async waitForSeason(seriesId, seasonNumber, waitMs = 60000) {
+    const started = Date.now();
+    for (;;) {
+      const eps = await this.sonarr('GET', `/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`);
+      if (eps && eps.length) return true;
+      if (Date.now() - started > waitMs) {
+        this.log(`Sonarr still lists no episodes for series ${seriesId} season ${seasonNumber} after ${Math.round(waitMs / 1000)}s`);
+        return false;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
   async searchAndGrabSeason(seriesId, seasonNumber, title) {
     await this.ensureDownloadClient('sonarr');
+    await this.waitForSeason(seriesId, seasonNumber);
     let releases;
     try {
       releases = await this.sonarr('GET', `/release?seriesId=${seriesId}&seasonNumber=${seasonNumber}`);
@@ -574,14 +610,19 @@ class ArchRecreationsPlugin extends Plugin {
       return false;
     }
     const tiers = this.lib().parseSeederTiers(this.settings.seederTiers);
-    const picked = this.lib().pickRelease(releases, tiers, { preferFullSeason: true });
+    const series = await this.sonarr('GET', `/series/${seriesId}`);
+    const is4K = String(await this.sonarrProfileNameOf(series.qualityProfileId, '')).toLowerCase() === '4k';
+    const label = `${title} season ${seasonNumber}`;
+    const picked = is4K
+      ? this.pick4K(releases, tiers, label, { season: true })
+      : this.lib().pickRelease(releases, tiers, { preferFullSeason: true });
     if (!picked) {
-      this.log(`no release cleared any seeder floor (${tiers.join(', ') || 'none set'}) for ${title} season ${seasonNumber}; nothing grabbed`);
+      this.log(`no release cleared any seeder floor (${tiers.join(', ') || 'none set'}) for ${label}; nothing grabbed`);
       return false;
     }
     await this.sonarr('POST', '/release', { guid: picked.release.guid, indexerId: picked.release.indexerId });
     this.log(
-      `grabbed at the ${picked.floor}+ seeder floor (${picked.release.seeders} actual, ${picked.release.fullSeason ? 'season pack' : 'single episodes'}) for ${title} season ${seasonNumber}:`,
+      `grabbed ${this.pickedHow(picked)} (${picked.release.seeders} seeders, ${this.gb(picked.release.size)}, ${picked.release.fullSeason ? 'season pack' : 'single episodes'}) for ${label}:`,
       picked.release.title
     );
     return true;
@@ -770,12 +811,7 @@ class ArchRecreationsPlugin extends Plugin {
     const profiles = await this.radarrProfiles();
     const profile = profiles.find((p) => p.name.toLowerCase() === String(qualityName || '').toLowerCase());
     if (!profile) throw new Error(`Radarr has no quality profile named "${qualityName}". It has: ${profiles.map((p) => p.name).join(', ')}.`);
-    let root = this.settings.radarrRootFolder;
-    if (!root) {
-      const roots = await this.radarr('GET', '/rootfolder');
-      root = roots.length ? roots[0].path : '';
-      if (!root) throw new Error('Radarr has no library folder set.');
-    }
+    const root = await this.rootFor('radarr', qualityName);
     await this.ensureDownloadClient();
     const added = await this.radarr('POST', '/movie', {
       tmdbId,
@@ -804,17 +840,40 @@ class ArchRecreationsPlugin extends Plugin {
       return false;
     }
     const tiers = this.lib().parseSeederTiers(this.settings.seederTiers);
-    const picked = this.lib().pickRelease(releases, tiers);
+    const movie = await this.radarr('GET', `/movie/${movieId}`);
+    const is4K = String(await this.profileNameOf(movie.qualityProfileId, '')).toLowerCase() === '4k';
+    const picked = is4K ? this.pick4K(releases, tiers, title) : this.lib().pickRelease(releases, tiers);
     if (!picked) {
       this.log(`no release cleared any seeder floor (${tiers.join(', ') || 'none set'}) for ${title}; nothing grabbed`);
       return false;
     }
     await this.radarr('POST', '/release', { guid: picked.release.guid, indexerId: picked.release.indexerId });
     this.log(
-      `grabbed at the ${picked.floor}+ seeder floor (${picked.release.seeders} actual) for ${title}:`,
+      `grabbed ${this.pickedHow(picked)} (${picked.release.seeders} seeders, ${this.gb(picked.release.size)}) for ${title}:`,
       picked.release.title
     );
     return true;
+  }
+
+  // The 4K rule (lib's pick4KRelease), with every release it ruled out
+  // logged and why -- a 4K search that grabs nothing should say whether
+  // nothing was there or everything was the wrong kind.
+  pick4K(releases, tiers, label, opts = {}) {
+    const L = this.lib();
+    for (const r of releases || []) {
+      const why = !r.rejected && L.unfit4K(r);
+      if (why) this.log(`4K rule, left out for ${label} (${why}):`, r.title);
+    }
+    const enough = Number(this.settings.fourKEnoughSeeders) || 0;
+    return L.pick4KRelease(releases, tiers, enough, opts);
+  }
+
+  pickedHow(picked) {
+    return picked.smallest ? `as the smallest with ${picked.floor}+ seeders` : `at the ${picked.floor}+ seeder floor`;
+  }
+
+  gb(bytes) {
+    return `${((bytes || 0) / 1e9).toFixed(1)} GB`;
   }
 
   /* ---------------- folders ---------------- */
@@ -2109,6 +2168,16 @@ class RecreationsSettingTab extends PluginSettingTab {
       .addText((t) =>
         t.setPlaceholder(DEFAULT_SETTINGS.seederTiers).setValue(s.seederTiers).onChange(async (v) => {
           s.seederTiers = v.trim() || DEFAULT_SETTINGS.seederTiers;
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('4K: enough seeders')
+      .setDesc('At the "4K" quality profile, the smallest release with at least this many seeders is grabbed, and a season takes a whole-season pack whenever one exists. Below this, the seeder floors decide. Left out of 4K entirely: AV1, remuxes, and Dolby Vision with no HDR layer.')
+      .addText((t) =>
+        t.setPlaceholder(String(DEFAULT_SETTINGS.fourKEnoughSeeders)).setValue(String(s.fourKEnoughSeeders)).onChange(async (v) => {
+          const n = Number(v);
+          s.fourKEnoughSeeders = Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_SETTINGS.fourKEnoughSeeders;
           await this.save();
         })
       );

@@ -5,6 +5,24 @@ explains what changed at each version and why.
 
 ## Unreleased
 
+- **4K picks the smallest well-seeded release, not the most seeded one.** At
+  the "4K" quality profile the seeder floors step aside: among releases with
+  at least *4K: enough seeders* (50) behind them, the smallest wins, an HDR
+  one first. Only when nothing is that well seeded do the floors decide, so
+  a thinly seeded file is never chosen just for being small. A season takes a
+  whole-season pack whenever a fit one exists — one torrent from one release
+  group, and grabbing a single-episode release would have fetched only that
+  episode. Ruled out of 4K altogether: anything not 2160p, AV1 (no hardware
+  decoding on this Mac, so it stutters), remuxes, and Dolby Vision with no
+  HDR layer (VLC plays those purple and green). Every release left out is
+  logged with the reason.
+- **A 4K film or series downloads into the `4K` root folder** when Radarr or
+  Sonarr has one, matching where its note goes in the vault.
+- Fixed: the first search for a newly added series found nothing. Sonarr
+  fetches a new series' episode list in the background and answers a release
+  search for a season it does not know yet with an empty list rather than an
+  error, so the search now waits for the season to appear.
+
 - **A film or series at the "4K" quality profile goes into a `4K` subfolder**
   of wherever movies or series otherwise land (`Movies/4K`, `Series/4K`, by
   default), so the two collections don't mix in the same folder listing. The
