@@ -232,15 +232,20 @@ monitored, season search, cascade picked the 497-seeder full-season pack at the
 
 The user's shape: a **series note** `Title (Year)` like a film note (`creator`
 where a film has `director`, `seasons` where it has `duration`, tag `series`),
-its body the art and then a wikilink per season; a **season note** `Title –
-Season N (Year)` (en dash, the season's first-aired year) with `season`,
-`episodes`, `series: [[Title (Year)]]`, its own TMDB season poster, tag
-`series/season` -- nested so a search for `series` finds both -- and an
-episode list in the body. Each episode is a line `- S1E1 – Name` until its
-file exists, then `- [S1E1 – Name](obsidian://arch-recreations?play=…)`, the
-same Open link a film has, one per episode. The list sits between
-`%% episodes %%` / `%% /episodes %%` comment markers, invisible in reading
-view, so a check replaces just the list and leaves anything written around it.
+its `seasons` property the season notes as wikilinks (the user asked for the
+property, not a list in the body), its body the art like a film's; a **season
+note** `Title – Season N (Year)` (en dash, the season's first-aired year) with
+`season`, `episodes`, `series: [[Title (Year)]]`, its own TMDB season poster,
+tag `series/season` -- nested so a search for `series` finds both -- and the
+episode list **first** in the body, the poster under it after two blank lines,
+so the note opens on the list rather than on a tall image. Each episode is a
+line `- S1E1 – Name` until its file exists, then
+`- [S1E1 – Name](obsidian://arch-recreations?play=…)`, the same Open link a
+film has, one per episode. A check finds the block by that line shape
+(`lib::EPISODE_LINE`) and replaces the first run of such lines, leaving
+anything else in the body alone. An earlier version wrapped the list in
+`%% episodes %%` comment markers; the user asked what they were and they went
+-- `replaceEpisodeList` still strips them from a note that has them.
 
 `addSeries(tmdbId, quality, seasonNumbers)`: `seriesDetails` (one TMDB call
 with `images,aggregate_credits,external_ids` -- TVDB id comes from

@@ -1177,8 +1177,9 @@ class ArchRecreationsPlugin extends Plugin {
         tags: this.settings.seriesTags,
         quality: sonarr ? qualityName : undefined,
         sonarr,
+        seasonLinks,
       });
-      const body = L.seriesNoteBody(posterFile ? this.linkFor(posterFile, notePath, '') : '', backdropLinks, seasonLinks);
+      const body = L.seriesNoteBody(posterFile ? this.linkFor(posterFile, notePath, '') : '', backdropLinks);
       const file = await this.writeMovieNote(notePath, fields, body, this.settings.seriesNoteOrder, this.settings.seriesNoteDefaults);
       lap(`note ${file.path}`);
 
