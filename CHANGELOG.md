@@ -5,6 +5,10 @@ explains what changed at each version and why.
 
 ## Unreleased
 
+> Checked 2026-09-23: everything under this heading is in the 0.2.0 release
+> assets, which were rebuilt from `94ad4ab` on 2026-09-16 without a version bump.
+> The next release takes a new number and moves these entries under it.
+
 - **4K picks the smallest well-seeded release, not the most seeded one.** At
   the "4K" quality profile the seeder floors step aside: among releases with
   at least *4K: enough seeders* (50) behind them, the smallest wins, an HDR

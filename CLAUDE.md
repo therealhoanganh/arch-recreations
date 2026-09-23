@@ -162,6 +162,8 @@ is not Node's** -- iterating it purges nothing. Node's own is `window.require`
 needed; with only the first, the purge still did nothing.
 **ARCH YT Playlists has the identical `purgeModuleCache`, likely with the same
 bug** -- not fixed here since it is a different repo, but worth checking.
+Confirmed by reading its code on 2026-09-23: it has both faults. It is open work
+in `../CLAUDE.md`.
 
 **The plugin starts Radarr and the download client itself.** Before anything
 that needs them — a lookup, a hand-off, the check — `ensureRadarr` and
@@ -439,7 +441,8 @@ purpose — the 4 TB library drive (`/Volumes/4T-HDD/Movies`, exFAT) is not
 always plugged in, and a download folder on an absent drive would create a
 stale `/Volumes/4T-HDD` that makes the real drive mount as `4T-HDD 1`. Radarr
 moves finished files over whenever the drive is present. All three apps are
-login items. Series will need Sonarr; `/Volumes/4T-HDD/Series` already exists.
+login items. Sonarr came later and is set up the same way; see *Series, and what
+Sonarr taught*.
 
 ## Development
 
@@ -465,3 +468,29 @@ npm run build
 git tag <version> && git push origin <version>
 gh release create <version> dist/main.js dist/manifest.json --title <version> --notes "..."
 ```
+
+## Where things stand (checked 2026-09-23)
+
+Edit this section in place; what changed and why goes in `CHANGELOG.md`.
+
+**Release 0.2.0 already holds what `CHANGELOG.md` lists under *Unreleased*.** Its
+assets were rebuilt from `94ad4ab` on 2026-09-16 without a version bump, so the
+next release takes a new number rather than 0.2.0 again. No vault installs the
+plugin through BRAT; it runs in `TESTFIELD` through the symlink.
+
+The download stack: Radarr `:7878`, Sonarr `:8989`, Prowlarr `:9696`,
+Transmission `:9091`, all login items, seeding off. Libraries on `4T-HDD`:
+`Movies`, `Series`, and `4K`, a root folder in both Radarr and Sonarr.
+
+The notes: `TESTFIELD` holds 94 film notes (4 of them under `Movies/4K`) and 12
+series and season notes; `᭄᭡ CHAOS` holds 7 film notes. He said he means to move
+the ones in `TESTFIELD` to CHAOS himself.
+
+Still loose:
+
+- The *Add a series* dialog and the two per-note download commands have not been
+  clicked by a human; the code beneath them ran through the CLI.
+- Two loose `President.Curtis.S01E05/06` files sit in the `Series` root, untouched.
+  *One Piece (Pace)*, a fan recut, was left alone by choice.
+- Solo's 4K upgrade, if one appears: *The two 4K films on the drive*, above.
+- Games, anime, manga and music are not designed.
