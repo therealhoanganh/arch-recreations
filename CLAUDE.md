@@ -522,8 +522,9 @@ Still loose:
   Garden Wall's episode files were renamed with an `S01E01` prefix first, because
   Sonarr filed `Book 3; Fire/314 - …` under season 1. Their `.srt` files kept their
   own names, so VLC does not pick them up by name.
-- *Check Sonarr for finished downloads* would fetch a subtitle for every episode
-  of the ~350 imported ones, at 100 a day. Run it when that is wanted.
+- The imported series' complete seasons were marked `dl-ed: true` by hand, so
+  *Check Sonarr for finished downloads* skips them and fetches no subtitles for
+  them; only incomplete seasons (Love, Death & Robots S01) are checked.
 - *Love, Death & Robots* S01 lacks episodes 13, 14, 17; *King of the Hill* has
   seasons 1–13, not the 2025 revival.
 - Two loose `President.Curtis.S01E05/06` files sit in the `Series` root, untouched.
