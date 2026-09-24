@@ -68,13 +68,13 @@ const DEFAULT_SETTINGS = {
   seasonPosterTemplate: '{{title}} \u2013 Season {{n}} ({{year}})',
   seriesTags: ['series'],
   seasonTags: ['series/season'],
-  seriesNoteOrder: 'dl-ed, watched, rank, banner-p, year, quality, URL, poster, banner, genres, creator, actors, seasons, tags',
-  seasonNoteOrder: 'dl-ed, watched, rank, season, episodes, year, quality, poster, series, tags',
+  seriesNoteOrder: 'plot, dl-ed, watched, rank, banner-p, year, quality, URL, poster, banner, genres, creator, actors, seasons, tags',
+  seasonNoteOrder: 'plot, dl-ed, watched, rank, season, episodes, year, quality, poster, series, tags',
   seriesNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
   seasonNoteDefaults: 'watched: false\nrank: 0',
   // Listed keys are written in this order; an own key left out is not
   // written; a key a person added by hand is always kept.
-  movieNoteOrder: 'dl-ed, watched, rank, banner-p, duration, year, quality, file, URL, poster, banner, genres, director, writer, actors, tags',
+  movieNoteOrder: 'plot, dl-ed, watched, rank, banner-p, duration, year, quality, file, URL, poster, banner, genres, director, writer, actors, tags',
   // "key: value" per line, written on every new note so the property exists to
   // be edited. A value already on a note is never changed.
   movieNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
@@ -175,6 +175,11 @@ class ArchRecreationsPlugin extends Plugin {
         return true;
       },
     });
+    this.addCommand({
+      id: 'add-plots',
+      name: 'Add plots from TMDB to notes without one',
+      callback: () => this.addPlots().catch((e) => this.fail(e)),
+    });
     this.addCommand({ id: 'detect-radarr', name: 'Detect Radarr', callback: () => this.detectRadarr(true) });
 
     // obsidian://arch-recreations?play=<path> -- what the note's file link is.
@@ -209,6 +214,17 @@ class ArchRecreationsPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // `plot` came in 0.3.0. A property order saved before then does not list
+    // it, and an own key missing from the order is dropped -- so it is put at
+    // the top of each saved order once. Taking it out again afterwards sticks.
+    if (!this.settings.plotAdded) {
+      for (const k of ['movieNoteOrder', 'seriesNoteOrder', 'seasonNoteOrder']) {
+        const v = String(this.settings[k] || '');
+        if (v.trim() && !/(^|[,\n])\s*plot\s*($|[,\n])/.test(v)) this.settings[k] = 'plot, ' + v;
+      }
+      this.settings.plotAdded = true;
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {
@@ -1142,6 +1158,60 @@ class ArchRecreationsPlugin extends Plugin {
     await this.app.vault.create(notePath, L.buildFrontmatter(fm) + (body ? '\n' + body : ''));
     const file = this.app.vault.getAbstractFileByPath(notePath);
     return file;
+  }
+
+  // Every film, series and season note with no `plot` gets TMDB's overview.
+  // Nothing else in the note is touched, except that its properties are put
+  // in the order setting's order. A note TMDB has no overview for is
+  // left as it is and says so in the log.
+  async addPlots() {
+    const done = [];
+    const empty = [];
+    // With folders set in settings, only notes inside them: a film note copied
+    // elsewhere to compare against, as the old CHAOS notes were, is not ours.
+    const roots = [];
+    if ((this.settings.movieLocationMode || 'specified') === 'specified') roots.push(this.resolveMovieFolder());
+    if ((this.settings.seriesLocationMode || 'specified') === 'specified') roots.push(this.resolveSeriesFolder());
+    const inRoots = (f) => roots.length < 2 || roots.some((r) => !r || f.path.startsWith(r + '/'));
+    for (const file of this.app.vault.getMarkdownFiles().filter(inRoots)) {
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!fm || (fm.plot != null && String(fm.plot).trim())) continue;
+      let plot = null;
+      let order = null;
+      // Only a note this plugin wrote: its own `URL` property, or a season
+      // note linking one. A Media DB note carries the same TMDB link under
+      // `url` or `tmdb`, and a copy kept for comparison must not be edited.
+      const L = this.lib();
+      const url = typeof fm.URL === 'string' ? fm.URL : '';
+      const movieId = /themoviedb\.org\/movie\//.test(url) ? L.tmdbIdFromText(url) : null;
+      const tvId = movieId ? null : L.tmdbTvIdFromText(url);
+      const season = movieId || tvId || url ? null : this.seasonOf(file);
+      try {
+        if (movieId) {
+          plot = (await this.movieDetails(movieId)).overview;
+          order = this.settings.movieNoteOrder;
+        } else if (tvId) {
+          plot = (await this.seriesDetails(tvId)).overview;
+          order = this.settings.seriesNoteOrder;
+        } else if (season) {
+          plot = (await this.seasonDetails(season.tmdbId, season.number)).overview;
+          order = this.settings.seasonNoteOrder;
+        } else continue;
+      } catch (e) {
+        this.log('plot: TMDB failed for', file.path, e.message);
+        continue;
+      }
+      if (!plot) {
+        empty.push(file.path);
+        this.log('plot: TMDB has no overview, left alone:', file.path);
+        continue;
+      }
+      await this.setFields(file, { plot }, order);
+      done.push(file.path);
+      this.log('plot added:', file.path);
+    }
+    new Notice(`ARCH Recreations: plot added to ${done.length} note(s)${empty.length ? `, ${empty.length} with none on TMDB` : ''}.`, 8000);
+    return { done, empty };
   }
 
   async setFields(file, fields, order = this.settings.movieNoteOrder) {

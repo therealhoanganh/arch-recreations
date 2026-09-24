@@ -37,7 +37,9 @@ the art second — the art is the point.
    separate banner download. Every image is `.webp`, even when the WebP is a
    few KB larger than the JPEG — the user asked for one extension over the
    bytes (`encodeWebp(…, { always: true })`).
-4. The note is written: defaults (`watched`, `rank: 0` — the family's "never judged" — `banner-p`), the plugin's
+4. The note is written: `plot` (TMDB's overview) at the very top, because the
+   user asked for it there when he found Recreations lacked it (0.3.0), then
+   defaults (`watched`, `rank: 0` — the family's "never judged" — `banner-p`), the plugin's
    fields, then the body: the poster embedded first, then every backdrop. An existing note at that path has
    its properties refreshed and its body left alone.
 5. Radarr is always *asked* whether it already has the film — a read-only
@@ -414,7 +416,23 @@ ffprobe -v error -select_streams v:0 \
 `bt709` is ordinary colour however large the file. A `dv_profile` of 5 is the
 Dolby Vision that breaks in VLC, 7 or 8 is fine.
 
-### The two 4K films on the drive, checked this way
+### The 4K films on the drive, checked this way
+
+Checked 2026-09-25, after the films from his PC arrived. The folders were
+renamed to `Title (Year)` then:
+
+- **HDR10, good**: Interstellar (x265, 28 Mbit/s), Oppenheimer (HDR with DV
+  profile 8, fine in VLC, 17 Mbit/s), Ghost in the Shell 1995 (19 Mbit/s),
+  Pacific Rim (36 Mbit/s), Ready Player One (20 Mbit/s).
+- **HDR10 remuxes**: Blade Runner 2049 (78 GB, 68 Mbit/s) and Ghost in the
+  Shell 2017 (56 GB, 75 Mbit/s). Kept as they are; he brought them.
+- **SDR, about 7 Mbit/s, YTS**: The Batman (its only copy, so it has a
+  note), Blade Runner 1982 and The Dark Knight. For those two he chose to keep
+  the 1080p copy, so their 4K folders (`Blade Runner 4K (1982)`, `The Dark
+  Knight (2008) [2160p] …`) have no note and are not in Radarr. An import from
+  the library folder skips them, because Radarr already holds both films.
+
+Earlier, the two that came first:
 
 - **Dunkirk** (`…iMAX.MULTi.UHD.Blu-ray.2160p.HDR…HEVC-DDR`, 18 GB) — HEVC,
   3840×2160, genuine HDR10, ~25 Mbit/s. A good copy; leave it alone.
@@ -469,28 +487,48 @@ git tag <version> && git push origin <version>
 gh release create <version> dist/main.js dist/manifest.json --title <version> --notes "..."
 ```
 
-## Where things stand (checked 2026-09-23)
+## Where things stand (checked 2026-09-25)
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.2.0 already holds what `CHANGELOG.md` lists under *Unreleased*.** Its
-assets were rebuilt from `94ad4ab` on 2026-09-16 without a version bump, so the
-next release takes a new number rather than 0.2.0 again. No vault installs the
-plugin through BRAT; it runs in `TESTFIELD` through the symlink.
+**Release 0.3.0 is current** (adds `plot`). The plugin is installed in `᭄᭡ CHAOS`
+through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
+symlink.
 
 The download stack: Radarr `:7878`, Sonarr `:8989`, Prowlarr `:9696`,
 Transmission `:9091`, all login items, seeding off. Libraries on `4T-HDD`:
 `Movies`, `Series`, and `4K`, a root folder in both Radarr and Sonarr.
 
-The notes: `TESTFIELD` holds 94 film notes (4 of them under `Movies/4K`) and 12
-series and season notes; `᭄᭡ CHAOS` holds 7 film notes. He said he means to move
-the ones in `TESTFIELD` to CHAOS himself.
+**The library lives in `᭄᭡ CHAOS` now** (`Movies`, `Movies/4K`, `Series`, their
+`Images`). On 2026-09-25 TESTFIELD's notes and art were copied there; **the
+TESTFIELD copies were left in place for him to compare and delete**, per his rule
+for moved notes. CHAOS's own older Media DB notes were rebuilt by the plugin and
+the originals kept in `᭄᭡ CHAOS/_/Old Film Notes/` for the same reason. What
+CHAOS holds and what was done is in that vault's `CLAUDE.md` and `CHANGELOG.md`.
+
+**4K replaced 1080p** for Blade Runner 2049, Interstellar, Oppenheimer and
+Dunkirk: Radarr points at the `4K` folder with the 4K profile, unmonitored (as
+Solo already was, so no "upgrade" is ever searched), the notes are in
+`Movies/4K`, and the 1080p folders are in 4T-HDD's Trash until he empties it.
 
 Still loose:
 
-- The *Add a series* dialog and the two per-note download commands have not been
-  clicked by a human; the code beneath them ran through the CLI.
+- **Nothing seeded well enough** (10+) for *The Divine Fury*, *Underworld: Rise
+  of the Lycans* and *Kingdom* (2012 anime) season 1. All stay wanted; Radarr
+  and Sonarr grab them from RSS if a seeded release appears.
+- Several 4K subtitles are not hash matches (the log says so per film); if one is
+  off, *Fetch subtitles for this film* after deleting the `.srt` tries again.
+- Series from his PC were registered in Sonarr unmonitored. Avatar's and Over the
+  Garden Wall's episode files were renamed with an `S01E01` prefix first, because
+  Sonarr filed `Book 3; Fire/314 - …` under season 1. Their `.srt` files kept their
+  own names, so VLC does not pick them up by name.
+- *Check Sonarr for finished downloads* would fetch a subtitle for every episode
+  of the ~350 imported ones, at 100 a day. Run it when that is wanted.
+- *Love, Death & Robots* S01 lacks episodes 13, 14, 17; *King of the Hill* has
+  seasons 1–13, not the 2025 revival.
 - Two loose `President.Curtis.S01E05/06` files sit in the `Series` root, untouched.
   *One Piece (Pace)*, a fan recut, was left alone by choice.
-- Solo's 4K upgrade, if one appears: *The two 4K films on the drive*, above.
+- The *Add a series* dialog and the two per-note download commands have not been
+  clicked by a human; the code beneath them ran through the CLI.
+- Solo's 4K upgrade, if one appears: *The 4K films on the drive*, above.
 - Games, anime, manga and music are not designed.

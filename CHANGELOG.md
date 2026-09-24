@@ -3,11 +3,28 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## Unreleased
+## 0.3.0 — current
 
-> Checked 2026-09-23: everything under this heading is in the 0.2.0 release
-> assets, which were rebuilt from `94ad4ab` on 2026-09-16 without a version bump.
-> The next release takes a new number and moves these entries under it.
+- **`plot`, TMDB's overview, at the top of every film, series and season
+  note.** Hoang Anh's words on 2026-09-25, when asked whether to keep the
+  `plot` property the old Media DB notes in CHAOS carried: *"Why don't Arch
+  Recreation have this? This is important and we should have this for all
+  other notes! Help me fix this, add plot property location at the top of
+  frontmatter."* It leads all three property-order defaults. A property order
+  saved before this version gets `plot` put at its top once, on load (the
+  `plotAdded` flag), because an own key missing from a saved order is dropped;
+  taking it out afterwards sticks. A newline in a text property is now written
+  as `\n` inside the quoted YAML string, since an overview can carry one.
+- **Add plots from TMDB to notes without one**, a command: every film, series
+  and season note inside the film and series folders that has no `plot` gets
+  TMDB's overview, and nothing else is written. It looks only inside the
+  folders set in settings because its first run also wrote into the old
+  Media DB notes kept for comparison in `_/Old Film Notes`, which carry the
+  same TMDB link; those were restored from the backup's versions folder. A
+  note TMDB has no overview for (many season notes) is logged and left alone.
+
+The entries below were already in the 0.2.0 assets, rebuilt from `94ad4ab` on
+2026-09-16 without a version bump; 0.3.0 is the first number that names them.
 
 - **4K picks the smallest well-seeded release, not the most seeded one.** At
   the "4K" quality profile the seeder floors step aside: among releases with
@@ -50,7 +67,7 @@ explains what changed at each version and why.
   the rescan that was supposed to find the file looked in a folder that
   didn't exist and never found it.
 
-## 0.2.0 — current
+## 0.2.0
 
 - **Series.** *Add a series* searches TMDB, then offers the seasons to
   download — all, some, or none for notes and art only. A series note reads
