@@ -516,6 +516,9 @@ Still loose:
 - **Nothing seeded well enough** (10+) for *The Divine Fury*, *Underworld: Rise
   of the Lycans* and *Kingdom* (2012 anime) season 1. All stay wanted; Radarr
   and Sonarr grab them from RSS if a seeded release appears.
+- The other downloads sent on 2026-09-25 (Alien: Covenant, Barbie, Kingdom 2019,
+  both Mortal Kombats, Alice in Borderland S1, Vox Machina S1) all landed and are
+  linked; the checks were run at 15:20.
 - Several 4K subtitles are not hash matches (the log says so per film); if one is
   off, *Fetch subtitles for this film* after deleting the `.srt` tries again.
 - Series from his PC were registered in Sonarr unmonitored. Avatar's and Over the
