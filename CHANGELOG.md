@@ -14,6 +14,8 @@ explains what changed at each version and why.
   arch-recreations instead?"*: Recreations is the ARCH plugin only CHAOS has. The name
   is Title Case, his preference; the older commands here are still sentence case until
   this plugin's UI review.
+  Tried with a real key press in TESTFIELD and CHAOS on the PC; on the Mac he confirmed
+  Cmd+R: *"Yes, it works on mac"*.
 
 ## 0.3.1
 
