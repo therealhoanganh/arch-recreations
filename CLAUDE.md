@@ -72,7 +72,9 @@ the art second — the art is the point.
    is machine-independent: `lib::locateFile` tries the stored path, then the
    part after the drive's name (`Movies/<Title (Year)>/<file>`) under every
    mounted volume for the platform (`/Volumes/*`, drive letters, `/media`,
-   `/run/media`, `/mnt`), and the player is asked for the platform's way —
+   `/run/media`, `/mnt`), and returns the one found **with symlinks resolved**
+   (0.3.1: on the PC `/Volumes/4T-HDD` is a link, and the snap VLC there has no
+   `/Volumes` in its sandbox), and the player is asked for the platform's way —
    `open -a`, `start`, the bare command — falling back to the system default.
    Parentheses in the link are encoded by hand: `encodeURIComponent` leaves
    them alone and a `)` inside a markdown link address ends the link.
@@ -491,7 +493,7 @@ gh release create <version> dist/main.js dist/manifest.json --title <version> --
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.3.0 is current** (adds `plot`). The plugin is installed in `᭄᭡ CHAOS`
+**Release 0.3.1 is current** (0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC). The plugin is installed in `᭄᭡ CHAOS`
 through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
 symlink.
 
