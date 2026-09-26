@@ -3,7 +3,19 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.3.0 — current
+## 0.3.1 — current
+
+- **A film's link opens in VLC on the Ubuntu PC.** Hoang Anh clicked a film
+  link there on 2026-09-26 and VLC answered *"VLC is unable to open the MRL
+  'file:///Volumes/4T-HDD/Movies/Alien%20%281979%29/…'"*. The stored path
+  exists on the PC through the link `/Volumes/4T-HDD` → `/run/media/hoanganh/4T-HDD`
+  (Backup Strategy, Part 2), so `locateFile` accepted it as it was, but VLC
+  there is a snap built on `core24`, and a snap's filesystem has no `/Volumes`
+  at all; it can reach `/run/media` through its `removable-media` connection.
+  `locateFile` now returns the found path with symlinks resolved, so any
+  sandboxed player gets the real address.
+
+## 0.3.0
 
 - **`plot`, TMDB's overview, at the top of every film, series and season
   note.** Hoang Anh's words on 2026-09-25, when asked whether to keep the
