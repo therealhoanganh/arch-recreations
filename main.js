@@ -182,6 +182,22 @@ class ArchRecreationsPlugin extends Plugin {
     });
     this.addCommand({ id: 'detect-radarr', name: 'Detect Radarr', callback: () => this.detectRadarr(true) });
 
+    // Reload the tab in front, as a browser's reload does: a note is read and
+    // drawn again, a Base runs again (a shuffled gallery reshuffles). Obsidian
+    // has only a whole-app reload. Here because he wanted it in CHAOS only, and
+    // this is the ARCH plugin CHAOS alone has (0.3.2). Ctrl+R, Cmd+R on the Mac.
+    this.addCommand({
+      id: 'reload-tab',
+      name: 'Reload This Tab',
+      hotkeys: [{ modifiers: ['Mod'], key: 'r' }],
+      checkCallback: (checking) => {
+        const leaf = this.app.workspace.getMostRecentLeaf();
+        if (!leaf || typeof leaf.rebuildView !== 'function') return false;
+        if (!checking) leaf.rebuildView();
+        return true;
+      },
+    });
+
     // obsidian://arch-recreations?play=<path> -- what the note's file link is.
     this.registerObsidianProtocolHandler('arch-recreations', (params) => {
       if (params.play) this.playFile(params.play);

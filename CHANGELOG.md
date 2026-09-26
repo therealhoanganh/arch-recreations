@@ -3,7 +3,19 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.3.1 — current
+## 0.3.2 — current
+
+- **Reload This Tab, on Ctrl+R (Cmd+R on the Mac).** Hoang Anh: *"I want to have a
+  reload page/note command hotkey which Obsidian doesn't have by default."* Obsidian
+  has only *Reload app without saving*, which reloads the whole window. This rebuilds
+  the tab in front (`leaf.rebuildView()`): a note is read and drawn again with its
+  scroll position kept, and a Base runs again, so a shuffled gallery reshuffles. Asked
+  which plugin should carry it, he answered *"I just need it in CHAOS so maybe in
+  arch-recreations instead?"*: Recreations is the ARCH plugin only CHAOS has. The name
+  is Title Case, his preference; the older commands here are still sentence case until
+  this plugin's UI review.
+
+## 0.3.1
 
 - **A film's link opens in VLC on the Ubuntu PC.** Hoang Anh clicked a film
   link there on 2026-09-26 and VLC answered *"VLC is unable to open the MRL
