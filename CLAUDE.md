@@ -206,7 +206,7 @@ Sonarr 4.0.19 at `localhost:8989`, Intel build installed by hand (the Homebrew
 cask is disabled for the same Gatekeeper failure as Radarr's). Library
 `/Volumes/4T-HDD/Series`, Transmission with category `sonarr`, the same `1080p`
 and `4K` profiles and MB-per-minute size floors as Radarr, The Pirate Bay
-pushed in by Prowlarr, a login item like the others.
+pushed in by Prowlarr, started on demand like the others (none is a login item since 2026-09-27).
 
 **Sonarr's config is `~/.config/Sonarr/config.xml`, Radarr's is
 `~/Library/Application Support/Radarr/config.xml`.** Same family, different
@@ -460,8 +460,11 @@ macOS Intel, Obsidian 1.13. Radarr 6.3 at `localhost:7878`, Prowlarr 2.5 at
 purpose — the 4 TB library drive (`/Volumes/4T-HDD/Movies`, exFAT) is not
 always plugged in, and a download folder on an absent drive would create a
 stale `/Volumes/4T-HDD` that makes the real drive mount as `4T-HDD 1`. Radarr
-moves finished files over whenever the drive is present. All three apps are
-login items. Sonarr came later and is set up the same way; see *Series, and what
+moves finished files over whenever the drive is present. **None of the apps is a login
+item** (he removed them on 2026-09-27): the plugin starts Radarr, Sonarr, the download
+client and, since 0.3.4, Prowlarr when it needs them (`ensureRunning`,
+`ensureIndexerProxy`). A new app the searches depend on needs the same, or it is simply
+off after a restart. Sonarr came later and is set up the same way; see *Series, and what
 Sonarr taught*.
 
 ## Development
@@ -493,12 +496,12 @@ gh release create <version> dist/main.js dist/manifest.json --title <version> --
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.3.3 is current** (0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
+**Release 0.3.4 is current** (0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
 through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
 symlink.
 
 The download stack: Radarr `:7878`, Sonarr `:8989`, Prowlarr `:9696`,
-Transmission `:9091`, all login items, seeding off. Libraries on `4T-HDD`:
+Transmission `:9091`, none a login item (the plugin starts each on demand), seeding off. Libraries on `4T-HDD`:
 `Movies`, `Series`, and `4K`, a root folder in both Radarr and Sonarr.
 
 **The library lives in `᭄᭡ CHAOS` now** (`Movies`, `Movies/4K`, `Series`, their

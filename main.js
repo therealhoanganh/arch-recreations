@@ -525,7 +525,9 @@ class ArchRecreationsPlugin extends Plugin {
       /* keep the defaults */
     }
     if (!['localhost', '127.0.0.1', '::1'].includes(host)) return this.portOpen(host, port);
-    return this.ensureRunning('Sonarr', host, port);
+    const up = await this.ensureRunning('Sonarr', host, port);
+    if (up) await this.ensureIndexerProxy('sonarr');
+    return up;
   }
 
   async sonarrProfiles() {
@@ -741,7 +743,43 @@ class ArchRecreationsPlugin extends Plugin {
     }
     // Only an app on this machine can be started from here.
     if (!['localhost', '127.0.0.1', '::1'].includes(host)) return this.portOpen(host, port);
-    return this.ensureRunning('Radarr', host, port);
+    const up = await this.ensureRunning('Radarr', host, port);
+    if (up) await this.ensureIndexerProxy('radarr');
+    return up;
+  }
+
+  // Radarr and Sonarr search through Prowlarr: each indexer Prowlarr pushes in
+  // is a proxy at localhost:9696, so with Prowlarr closed a search finds
+  // nothing and Radarr sidelines the indexer with a timeout that escalates.
+  // He took the apps off his login items on 2026-09-27, so Prowlarr is started
+  // here like the others, once the app that asks for it is up.
+  async ensureIndexerProxy(app) {
+    let list;
+    try {
+      list = await (app === 'sonarr' ? this.sonarr('GET', '/indexer') : this.radarr('GET', '/indexer'));
+    } catch (e) {
+      this.log(`could not ask ${app === 'sonarr' ? 'Sonarr' : 'Radarr'} for its indexers:`, e.message);
+      return false;
+    }
+    const done = new Set();
+    for (const i of list || []) {
+      if (!(i.enableAutomaticSearch || i.enableInteractiveSearch || i.enableRss)) continue;
+      const base = ((i.fields || []).find((f) => f.name === 'baseUrl') || {}).value;
+      let u;
+      try {
+        u = new URL(base);
+      } catch (_) {
+        continue;
+      }
+      const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+      if (!['localhost', '127.0.0.1', '::1'].includes(u.hostname)) continue;
+      if (!(port === 9696 || /prowlarr/i.test(i.name || ''))) continue;
+      const key = `${u.hostname}:${port}`;
+      if (done.has(key)) continue;
+      done.add(key);
+      await this.ensureRunning('Prowlarr', u.hostname, port);
+    }
+    return true;
   }
 
   // Radarr says which client it hands downloads to -- Transmission,

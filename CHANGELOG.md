@@ -3,7 +3,22 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.3.3 — current
+## 0.3.4 — current
+
+- **Prowlarr is started when Radarr or Sonarr needs it**, like Radarr, Sonarr and
+  Transmission already were. On 2026-09-27 he took Radarr and two others off his macOS
+  login items and asked whether that was all right: *"I remove Radarr and two other app from
+  auto open on login list in system setting, is that ok? Is that auto open default of the
+  apps? Can we turn it off by default?"* They were not the apps' defaults; the session that
+  set up the stack made all four login items. Three of them the plugin already starts on
+  demand (`ensureRunning`), but not Prowlarr. Radarr's only indexer, *The Pirate Bay
+  (Prowlarr)*, is a proxy at `localhost:9696`, so with Prowlarr closed a search would find
+  nothing and Radarr would sideline the indexer. `ensureIndexerProxy` asks Radarr or Sonarr for
+  its enabled indexers once the app is up and starts Prowlarr for any on this computer at port
+  9696 or named for it. Tested by stopping Prowlarr and calling `ensureRadarr`: *Prowlarr is up
+  after 4s*, and Radarr's health listed no indexer fault.
+
+## 0.3.3
 
 - **Search results can be picked with the keyboard**, from the web-design-guidelines review of 2026-09-27 (`~/Documents/ARCH UI Review.md`), whose whole list he approved: *"Yes, proceed on."* In *Add a Film* and *Add a
   Series* a result was a box with a click handler: Enter searched, and then the mouse was
