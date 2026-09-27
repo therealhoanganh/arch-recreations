@@ -85,23 +85,28 @@ const DEFAULT_SETTINGS = {
 const TMDB = 'https://api.themoviedb.org/3';
 const OPENSUBTITLES = 'https://api.opensubtitles.com/api/v1';
 
+// "1 video", "3 videos": a count and its word, never "video(s)".
+function plural(n, word) { return `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`; }
+
 class ArchRecreationsPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
     this.addSettingTab(new RecreationsSettingTab(this.app, this));
+    this.style = document.head.createEl('style', { attr: { id: 'arch-recreations' } });
+    this.style.textContent = RESULT_CSS;
     this.inFlight = new Set();
 
-    this.addRibbonIcon('clapperboard', 'Add a film', () => this.openAddMovie());
-    this.addCommand({ id: 'add-movie', name: 'Add a film', callback: () => this.openAddMovie() });
-    this.addCommand({ id: 'add-series', name: 'Add a series', callback: () => this.openAddSeries() });
+    this.addRibbonIcon('clapperboard', 'Add a Film', () => this.openAddMovie());
+    this.addCommand({ id: 'add-movie', name: 'Add a Film', callback: () => this.openAddMovie() });
+    this.addCommand({ id: 'add-series', name: 'Add a Series', callback: () => this.openAddSeries() });
     this.addCommand({
       id: 'check-sonarr',
-      name: 'Check Sonarr for finished downloads',
+      name: 'Check Sonarr for Finished Downloads',
       callback: () => this.checkSonarr(true),
     });
     this.addCommand({
       id: 'download-series',
-      name: 'Download all seasons with Sonarr',
+      name: 'Download All Seasons with Sonarr',
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== 'md' || !this.tmdbTvIdOf(f)) return false;
@@ -111,7 +116,7 @@ class ArchRecreationsPlugin extends Plugin {
     });
     this.addCommand({
       id: 'download-season',
-      name: 'Download this season with Sonarr',
+      name: 'Download This Season with Sonarr',
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== 'md' || !this.seasonOf(f)) return false;
@@ -122,27 +127,27 @@ class ArchRecreationsPlugin extends Plugin {
     this.addCommand({ id: 'detect-sonarr', name: 'Detect Sonarr', callback: () => this.detectSonarr(true) });
     this.addCommand({
       id: 'import-series',
-      name: 'Import existing series from Sonarr',
+      name: 'Import Existing Series from Sonarr',
       callback: () => this.importExistingSeries(true).catch((e) => this.fail(e)),
     });
     this.addCommand({
       id: 'check-downloads',
-      name: 'Check Radarr for finished downloads',
+      name: 'Check Radarr for Finished Downloads',
       callback: () => this.checkDownloads(true),
     });
     this.addCommand({
       id: 'import-movies',
-      name: 'Import existing films from Radarr',
+      name: 'Import Existing Films from Radarr',
       callback: () => this.importExistingMovies(true).catch((e) => this.fail(e)),
     });
     this.addCommand({
       id: 'import-films-from-disk',
-      name: 'Import films from the library folder',
+      name: 'Import Films from the Library Folder',
       callback: () => this.importFilmsFromDisk(true).catch((e) => this.fail(e)),
     });
     this.addCommand({
       id: 'subtitles-for-note',
-      name: 'Fetch subtitles for this film',
+      name: 'Fetch Subtitles for This Film',
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== 'md' || !this.tmdbIdOf(f)) return false;
@@ -152,7 +157,7 @@ class ArchRecreationsPlugin extends Plugin {
     });
     this.addCommand({
       id: 'download-note',
-      name: 'Download this film with Radarr',
+      name: 'Download This Film with Radarr',
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== 'md' || !this.tmdbIdOf(f)) return false;
@@ -166,7 +171,7 @@ class ArchRecreationsPlugin extends Plugin {
     const player = (this.settings.player || '').trim();
     this.addCommand({
       id: 'open-film',
-      name: player ? `Open this film in ${player}` : 'Open this film',
+      name: player ? `Open This Film in ${player}` : 'Open This Film',
       checkCallback: (checking) => {
         const f = this.app.workspace.getActiveFile();
         const fm = f && f.extension === 'md' ? this.app.metadataCache.getFileCache(f)?.frontmatter : null;
@@ -177,7 +182,7 @@ class ArchRecreationsPlugin extends Plugin {
     });
     this.addCommand({
       id: 'add-plots',
-      name: 'Add plots from TMDB to notes without one',
+      name: 'Add Plots from TMDB to Notes without One',
       callback: () => this.addPlots().catch((e) => this.fail(e)),
     });
     this.addCommand({ id: 'detect-radarr', name: 'Detect Radarr', callback: () => this.detectRadarr(true) });
@@ -214,6 +219,7 @@ class ArchRecreationsPlugin extends Plugin {
   }
 
   onunload() {
+    if (this.style) this.style.remove();
     this.purgeModuleCache();
   }
 
@@ -1226,7 +1232,7 @@ class ArchRecreationsPlugin extends Plugin {
       done.push(file.path);
       this.log('plot added:', file.path);
     }
-    new Notice(`ARCH Recreations: plot added to ${done.length} note(s)${empty.length ? `, ${empty.length} with none on TMDB` : ''}.`, 8000);
+    new Notice(`ARCH Recreations: plot added to ${plural(done.length, 'note')}${empty.length ? `, ${empty.length} with none on TMDB` : ''}.`, 8000);
     return { done, empty };
   }
 
@@ -1383,7 +1389,7 @@ class ArchRecreationsPlugin extends Plugin {
       }
 
       if (open) {
-        new Notice(`${series.title} (${series.year}) added, ${seasonLinks.length} season(s).`, 5000);
+        new Notice(`${series.title} (${series.year}) added, ${plural(seasonLinks.length, 'season')}.`, 5000);
         const leaf = this.app.workspace.getLeaf(false);
         await leaf.openFile(file);
       }
@@ -1444,7 +1450,7 @@ class ArchRecreationsPlugin extends Plugin {
     const qualityName = await this.sonarrProfileNameOf(target.qualityProfileId, quality);
     await this.setFields(file, { quality: qualityName, 'dl-ed': false }, this.settings.seriesNoteOrder);
     for (const sn of series.seasons) target = await this.downloadSeason(target, sn.number);
-    new Notice(`${series.title}: ${series.seasons.length} season(s) sent to Sonarr as ${qualityName}. Run "Check Sonarr for finished downloads" later.`, 8000);
+    new Notice(`${series.title}: ${plural(series.seasons.length, 'season')} sent to Sonarr as ${qualityName}. Run "Check Sonarr for Finished Downloads" later.`, 8000);
   }
 
   // "Download this season with Sonarr", on a season note.
@@ -1461,7 +1467,7 @@ class ArchRecreationsPlugin extends Plugin {
     const qualityName = await this.sonarrProfileNameOf(target.qualityProfileId, quality);
     await this.setFields(file, { quality: qualityName, 'dl-ed': false }, this.settings.seasonNoteOrder);
     await this.downloadSeason(target, season.number);
-    new Notice(`${series.title} season ${season.number} sent to Sonarr as ${qualityName}. Run "Check Sonarr for finished downloads" later.`, 8000);
+    new Notice(`${series.title} season ${season.number} sent to Sonarr as ${qualityName}. Run "Check Sonarr for Finished Downloads" later.`, 8000);
   }
 
   // "Check Sonarr for finished downloads": every season note not yet complete
@@ -1544,7 +1550,7 @@ class ArchRecreationsPlugin extends Plugin {
       }
     }
     this.log(`Sonarr check: ${seasonNotes.length} season note(s) looked at, ${completed} now complete`);
-    if (manual) new Notice(`${completed} of ${seasonNotes.length} season note(s) are now complete.`);
+    if (manual) new Notice(`${completed} of ${plural(seasonNotes.length, 'season note')} ${completed === 1 ? 'is' : 'are'} now complete.`);
   }
 
   // "Import existing series from Sonarr": one series note plus one season note
@@ -1585,7 +1591,7 @@ class ArchRecreationsPlugin extends Plugin {
       }
     }
     this.log(`import series: ${made} of ${missing.length} note(s) written`);
-    if (manual) new Notice(`${made} of ${missing.length} series note(s) written.`, 8000);
+    if (manual) new Notice(`${made} of ${plural(missing.length, 'series note')} written.`, 8000);
   }
 
   /* ---------------- downloads ---------------- */
@@ -1669,7 +1675,7 @@ class ArchRecreationsPlugin extends Plugin {
       await this.subtitlesFor(file, m).catch((e) => this.log('subtitles failed:', e.message));
     }
     this.log(`download check: ${waiting.length} without a file, ${landed} landed`);
-    if (manual) new Notice(`${landed} of ${waiting.length} film note(s) without a file got one.`);
+    if (manual) new Notice(`${landed} of ${plural(waiting.length, 'film note')} without a file got one.`);
   }
 
   // "Import existing films from Radarr": one note for every film Radarr
@@ -1711,7 +1717,7 @@ class ArchRecreationsPlugin extends Plugin {
       }
     }
     this.log(`import films: ${made} of ${missing.length} note(s) written`);
-    if (manual) new Notice(`${made} of ${missing.length} film note(s) written.`, 8000);
+    if (manual) new Notice(`${made} of ${plural(missing.length, 'film note')} written.`, 8000);
   }
 
   // "Import films from the library folder": for every folder shaped
@@ -1855,7 +1861,7 @@ class ArchRecreationsPlugin extends Plugin {
         await this.searchAndGrab(r.id, r.title);
       }
     }
-    new Notice(`${r.title} sent to Radarr as ${qualityName}. Run "Check Radarr for finished downloads" later.`, 8000);
+    new Notice(`${r.title} sent to Radarr as ${qualityName}. Run "Check Radarr for Finished Downloads" later.`, 8000);
   }
 
   /* ---------------- subtitles ---------------- */
@@ -1928,6 +1934,44 @@ class ArchRecreationsPlugin extends Plugin {
 
 /* ---------------- add-film modal ---------------- */
 
+const RESULT_CSS = `
+.arch-recreations-result { padding: 6px 8px; cursor: pointer; border-bottom: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); }
+.arch-recreations-result:hover { background: var(--background-modifier-hover); }
+.arch-recreations-result:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+`;
+
+// One search result in Add a Film / Add a Series (0.3.3). Tab reaches it,
+// Enter or Space picks it, and the arrow keys move between the results and
+// back up to the search box, so a search never needs the mouse.
+function resultItem(list, r, input, onPick) {
+  const item = list.createDiv({ cls: 'arch-recreations-result', attr: { tabindex: '0', role: 'button' } });
+  item.createEl('strong', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
+  if (r.overview) {
+    const p = item.createDiv({ text: r.overview.length > 160 ? r.overview.slice(0, 157) + '…' : r.overview });
+    p.style.fontSize = '0.85em';
+    p.style.opacity = '0.8';
+  }
+  item.addEventListener('click', onPick);
+  item.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onPick();
+    } else if (e.key === 'ArrowDown' && item.nextElementSibling) {
+      e.preventDefault();
+      item.nextElementSibling.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      (item.previousElementSibling || input).focus();
+    }
+  });
+  return item;
+}
+
+// A search error with what to check, unless the message already says it.
+function searchError(e) {
+  return /settings/i.test(e.message) ? e.message : `${e.message} Check the connection, and the TMDB API Key in settings.`;
+}
+
 class AddMovieModal extends Modal {
   constructor(app, plugin) {
     super(app);
@@ -1940,10 +1984,10 @@ class AddMovieModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass('arch-recreations-add');
-    contentEl.createEl('h3', { text: 'Add a film' });
+    this.titleEl.setText('Add a Film');
 
     const row = contentEl.createDiv({ cls: 'arch-recreations-row' });
-    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Alien' });
+    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Alien…', attr: { 'aria-label': 'Film title', spellcheck: 'false' } });
     input.style.flex = '1';
     const searchBtn = row.createEl('button', { text: 'Search' });
 
@@ -1954,8 +1998,8 @@ class AddMovieModal extends Modal {
     const sendBox = send.createEl('input', { type: 'checkbox' });
     sendBox.checked = radarrOn;
     sendBox.disabled = !radarrOn;
-    send.appendText(radarrOn ? ' Send to Radarr as ' : ' Radarr not configured — note and art only');
-    const quality = send.createEl('select');
+    send.appendText(radarrOn ? ' Send to Radarr as ' : ' Radarr is not set up in settings, so the note and art only');
+    const quality = send.createEl('select', { attr: { 'aria-label': 'Quality' } });
     quality.disabled = !radarrOn;
     const fill = (names) => {
       quality.empty();
@@ -1970,7 +2014,7 @@ class AddMovieModal extends Modal {
         .catch((e) => this.plugin.log('could not list Radarr profiles:', e.message));
     }
 
-    const list = contentEl.createDiv({ cls: 'arch-recreations-results' });
+    const list = contentEl.createDiv({ cls: 'arch-recreations-results', attr: { 'aria-live': 'polite' } });
     list.style.marginTop = '10px';
     list.style.maxHeight = '50vh';
     list.style.overflowY = 'auto';
@@ -1984,7 +2028,7 @@ class AddMovieModal extends Modal {
         this.results = await this.plugin.searchMovies(q);
       } catch (e) {
         list.empty();
-        list.createDiv({ text: e.message });
+        list.createDiv({ text: searchError(e) });
         return;
       }
       list.empty();
@@ -1993,17 +2037,7 @@ class AddMovieModal extends Modal {
         return;
       }
       for (const r of this.results) {
-        const item = list.createDiv({ cls: 'arch-recreations-result' });
-        item.style.padding = '6px 8px';
-        item.style.cursor = 'pointer';
-        item.style.borderBottom = '1px solid var(--background-modifier-border)';
-        item.createEl('strong', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
-        if (r.overview) {
-          const p = item.createDiv({ text: r.overview.length > 160 ? r.overview.slice(0, 157) + '…' : r.overview });
-          p.style.fontSize = '0.85em';
-          p.style.opacity = '0.8';
-        }
-        item.addEventListener('click', () => {
+        resultItem(list, r, input, () => {
           this.close();
           this.plugin.addMovie(r.tmdbId, quality.value, sendBox.checked).catch((e) => this.plugin.fail(e));
         });
@@ -2014,6 +2048,12 @@ class AddMovieModal extends Modal {
       if (e.key === 'Enter') {
         e.preventDefault();
         run();
+      } else if (e.key === 'ArrowDown') {
+        const first = list.querySelector('.arch-recreations-result');
+        if (first) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     });
     input.focus();
@@ -2037,14 +2077,14 @@ class AddSeriesModal extends Modal {
   async onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl('h3', { text: 'Add a series' });
+    this.titleEl.setText('Add a Series');
     const row = contentEl.createDiv();
     row.style.display = 'flex';
     row.style.gap = '6px';
-    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Scavengers Reign' });
+    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Scavengers Reign…', attr: { 'aria-label': 'Series title', spellcheck: 'false' } });
     input.style.flex = '1';
     const searchBtn = row.createEl('button', { text: 'Search' });
-    const list = contentEl.createDiv();
+    const list = contentEl.createDiv({ attr: { 'aria-live': 'polite' } });
     list.style.marginTop = '10px';
     list.style.maxHeight = '50vh';
     list.style.overflowY = 'auto';
@@ -2059,7 +2099,7 @@ class AddSeriesModal extends Modal {
         results = await this.plugin.searchSeries(q);
       } catch (e) {
         list.empty();
-        list.createDiv({ text: e.message });
+        list.createDiv({ text: searchError(e) });
         return;
       }
       list.empty();
@@ -2068,17 +2108,7 @@ class AddSeriesModal extends Modal {
         return;
       }
       for (const r of results) {
-        const item = list.createDiv();
-        item.style.padding = '6px 8px';
-        item.style.cursor = 'pointer';
-        item.style.borderBottom = '1px solid var(--background-modifier-border)';
-        item.createEl('strong', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
-        if (r.overview) {
-          const p = item.createDiv({ text: r.overview.length > 160 ? r.overview.slice(0, 157) + '\u2026' : r.overview });
-          p.style.fontSize = '0.85em';
-          p.style.opacity = '0.8';
-        }
-        item.addEventListener('click', () => this.chooseSeasons(r));
+        resultItem(list, r, input, () => this.chooseSeasons(r));
       }
     };
     searchBtn.addEventListener('click', run);
@@ -2086,6 +2116,12 @@ class AddSeriesModal extends Modal {
       if (e.key === 'Enter') {
         e.preventDefault();
         run();
+      } else if (e.key === 'ArrowDown') {
+        const first = list.querySelector('.arch-recreations-result');
+        if (first) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     });
     input.focus();
@@ -2094,7 +2130,7 @@ class AddSeriesModal extends Modal {
   async chooseSeasons(r) {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl('h3', { text: `${r.title}${r.year ? ` (${r.year})` : ''}` });
+    this.titleEl.setText(`${r.title}${r.year ? ` (${r.year})` : ''}`);
     const info = contentEl.createDiv({ text: 'Loading seasons\u2026' });
     let series;
     try {
@@ -2112,8 +2148,8 @@ class AddSeriesModal extends Modal {
     const dlBox = dl.createEl('input', { type: 'checkbox' });
     dlBox.checked = sonarrOn;
     dlBox.disabled = !sonarrOn;
-    dl.appendText(sonarrOn ? ' Download with Sonarr as ' : ' Sonarr not configured \u2014 notes and art only');
-    const quality = dl.createEl('select');
+    dl.appendText(sonarrOn ? ' Download with Sonarr as ' : ' Sonarr is not set up in settings, so the notes and art only');
+    const quality = dl.createEl('select', { attr: { 'aria-label': 'Quality' } });
     quality.disabled = !sonarrOn;
     const fill = (names) => {
       quality.empty();
@@ -2137,7 +2173,7 @@ class AddSeriesModal extends Modal {
       row.style.marginLeft = '18px';
       const box = row.createEl('input', { type: 'checkbox' });
       box.checked = true;
-      row.appendText(` Season ${sn.number}${sn.year ? ` (${sn.year})` : ''} \u2014 ${sn.episodeCount} episode(s)`);
+      row.appendText(` Season ${sn.number}${sn.year ? ` (${sn.year})` : ''} \u2014 ${plural(sn.episodeCount, 'episode')}`);
       boxes.push({ box, number: sn.number });
       box.addEventListener('change', () => {
         allBox.checked = boxes.every((b) => b.box.checked);
@@ -2156,7 +2192,7 @@ class AddSeriesModal extends Modal {
 
     const actions = contentEl.createDiv();
     actions.style.marginTop = '10px';
-    const add = actions.createEl('button', { text: 'Add' });
+    const add = actions.createEl('button', { text: 'Add Series', cls: 'mod-cta' });
     add.addEventListener('click', () => {
       const chosen = dlBox.checked ? boxes.filter((b) => b.box.checked).map((b) => b.number) : null;
       this.close();
@@ -2175,6 +2211,11 @@ class RecreationsSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    // Its fields hold paths, commands, patterns and lists, not prose, so no
+    // spell-check underlines; set as each one gets focus, which is when they appear.
+    this.containerEl.addEventListener('focusin', (e) => {
+      if (e.target.matches('input[type="text"], input:not([type]), textarea')) e.target.spellcheck = false;
+    });
   }
 
   async save() {
@@ -2186,9 +2227,9 @@ class RecreationsSettingTab extends PluginSettingTab {
     const s = this.plugin.settings;
     containerEl.empty();
 
-    containerEl.createEl('h3', { text: 'Keys' });
+    new Setting(containerEl).setName('Keys').setHeading();
     new Setting(containerEl)
-      .setName('TMDB API key')
+      .setName('TMDB API Key')
       .setDesc('Free, from themoviedb.org → Settings → API. Everything about a film comes from here.')
       .addText((t) =>
         t.setValue(s.tmdbApiKey).onChange(async (v) => {
@@ -2197,7 +2238,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('OpenSubtitles API key')
+      .setName('OpenSubtitles API Key')
       .setDesc('From opensubtitles.com → Profile → API consumers, with "Under dev" ticked so the key alone allows 100 downloads a day. Leave empty to skip subtitles.')
       .addText((t) =>
         t.setValue(s.openSubtitlesApiKey).onChange(async (v) => {
@@ -2206,7 +2247,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Subtitle language')
+      .setName('Subtitle Language')
       .setDesc('Two-letter code. The file is saved beside the film as <film>.<code>.srt.')
       .addText((t) =>
         t.setValue(s.subtitleLanguage).onChange(async (v) => {
@@ -2215,7 +2256,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
 
-    containerEl.createEl('h3', { text: 'Radarr' });
+    new Setting(containerEl).setName('Radarr').setHeading();
     new Setting(containerEl)
       .setName('Detect Radarr')
       .setDesc('Reads the address and API key from Radarr\'s own config file and asks it for the library folder and quality profiles.')
@@ -2224,7 +2265,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         this.display();
       }));
     new Setting(containerEl)
-      .setName('Radarr address')
+      .setName('Radarr Address')
       .addText((t) =>
         t.setPlaceholder('http://localhost:7878').setValue(s.radarrUrl).onChange(async (v) => {
           s.radarrUrl = v.trim();
@@ -2232,7 +2273,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Radarr API key')
+      .setName('Radarr API Key')
       .addText((t) =>
         t.setValue(s.radarrApiKey).onChange(async (v) => {
           s.radarrApiKey = v.trim();
@@ -2240,7 +2281,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Radarr library folder')
+      .setName('Radarr Library Folder')
       .setDesc('Where Radarr puts finished films. Filled in by detection from Radarr\'s first root folder.')
       .addText((t) =>
         t.setValue(s.radarrRootFolder).onChange(async (v) => {
@@ -2249,7 +2290,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Seeder floors, highest first')
+      .setName('Seeder Floors, Highest First')
       .setDesc('Comma-separated. Radarr\'s live search runs once; the highest floor with any release clears it wins, and the most-seeded release at that floor is grabbed. Radarr\'s own per-indexer minimum seeders still applies underneath, as a hard cutoff.')
       .addText((t) =>
         t.setPlaceholder(DEFAULT_SETTINGS.seederTiers).setValue(s.seederTiers).onChange(async (v) => {
@@ -2258,7 +2299,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('4K: enough seeders')
+      .setName('4K: Enough Seeders')
       .setDesc('At the "4K" quality profile, the smallest release with at least this many seeders is grabbed, and a season takes a whole-season pack whenever one exists. Below this, the seeder floors decide. Left out of 4K entirely: AV1, remuxes, and Dolby Vision with no HDR layer.')
       .addText((t) =>
         t.setPlaceholder(String(DEFAULT_SETTINGS.fourKEnoughSeeders)).setValue(String(s.fourKEnoughSeeders)).onChange(async (v) => {
@@ -2268,7 +2309,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Default quality')
+      .setName('Default Quality')
       .setDesc('The Radarr quality profile pre-selected when adding a film; it is written to the note as `quality`.')
       .addText((t) =>
         t.setValue(s.defaultQuality).onChange(async (v) => {
@@ -2277,7 +2318,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Open films in')
+      .setName('Open Films In')
       .setDesc('The app the note\'s file link opens the film in, e.g. VLC. Only that link is affected; double-clicking an .mp4 anywhere else still uses the system default. Empty for the system default.')
       .addText((t) =>
         t.setPlaceholder('VLC').setValue(s.player).onChange(async (v) => {
@@ -2286,7 +2327,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
 
-    containerEl.createEl('h3', { text: 'Sonarr' });
+    new Setting(containerEl).setName('Sonarr').setHeading();
     new Setting(containerEl)
       .setName('Detect Sonarr')
       .setDesc('Reads the address and API key from Sonarr\'s own config file and asks it for the library folder and quality profiles.')
@@ -2294,20 +2335,20 @@ class RecreationsSettingTab extends PluginSettingTab {
         await this.plugin.detectSonarr(true);
         this.display();
       }));
-    new Setting(containerEl).setName('Sonarr address').addText((t) =>
+    new Setting(containerEl).setName('Sonarr Address').addText((t) =>
       t.setPlaceholder('http://localhost:8989').setValue(s.sonarrUrl).onChange(async (v) => {
         s.sonarrUrl = v.trim();
         await this.save();
       })
     );
-    new Setting(containerEl).setName('Sonarr API key').addText((t) =>
+    new Setting(containerEl).setName('Sonarr API Key').addText((t) =>
       t.setValue(s.sonarrApiKey).onChange(async (v) => {
         s.sonarrApiKey = v.trim();
         await this.save();
       })
     );
     new Setting(containerEl)
-      .setName('Sonarr library folder')
+      .setName('Sonarr Library Folder')
       .setDesc('Where Sonarr puts finished episodes, one folder per series with a folder per season.')
       .addText((t) =>
         t.setValue(s.sonarrRootFolder).onChange(async (v) => {
@@ -2316,16 +2357,16 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
 
-    containerEl.createEl('h3', { text: 'Where things go' });
+    new Setting(containerEl).setName('Where Things Go').setHeading();
     new Setting(containerEl)
-      .setName('Film note location')
+      .setName('Film Note Location')
       .setDesc('Same folder and subfolder are relative to the note that is open when you add a film.')
       .addDropdown((d) =>
         d
-          .addOption('vault', 'Vault folder')
-          .addOption('same', 'Same folder as the open note')
-          .addOption('subfolder', 'In subfolder under the open note')
-          .addOption('specified', 'In the folder specified below')
+          .addOption('vault', 'Vault Folder')
+          .addOption('same', 'Same Folder as the Open Note')
+          .addOption('subfolder', 'In Subfolder under the Open Note')
+          .addOption('specified', 'In the Folder Specified Below')
           .setValue(s.movieLocationMode || 'specified')
           .onChange(async (v) => {
             s.movieLocationMode = v;
@@ -2334,7 +2375,7 @@ class RecreationsSettingTab extends PluginSettingTab {
           })
       );
     if ((s.movieLocationMode || 'specified') === 'subfolder') {
-      new Setting(containerEl).setName('Film note subfolder name').addText((t) =>
+      new Setting(containerEl).setName('Film Note Subfolder Name').addText((t) =>
         t.setValue(s.movieSubfolder).onChange(async (v) => {
           s.movieSubfolder = v.trim() || 'Movies';
           await this.save();
@@ -2343,7 +2384,7 @@ class RecreationsSettingTab extends PluginSettingTab {
     }
     if ((s.movieLocationMode || 'specified') === 'specified') {
       new Setting(containerEl)
-        .setName('Film note folder')
+        .setName('Film Note Folder')
         .setDesc('Path from the vault root.')
         .addText((t) =>
           t.setValue(s.movieFolder).onChange(async (v) => {
@@ -2353,14 +2394,14 @@ class RecreationsSettingTab extends PluginSettingTab {
         );
     }
     new Setting(containerEl)
-      .setName('Series note location')
+      .setName('Series Note Location')
       .setDesc('Series notes and their season notes go together. Same folder and subfolder are relative to the note that is open when you add a series.')
       .addDropdown((d) =>
         d
-          .addOption('vault', 'Vault folder')
-          .addOption('same', 'Same folder as the open note')
-          .addOption('subfolder', 'In subfolder under the open note')
-          .addOption('specified', 'In the folder specified below')
+          .addOption('vault', 'Vault Folder')
+          .addOption('same', 'Same Folder as the Open Note')
+          .addOption('subfolder', 'In Subfolder under the Open Note')
+          .addOption('specified', 'In the Folder Specified Below')
           .setValue(s.seriesLocationMode || 'specified')
           .onChange(async (v) => {
             s.seriesLocationMode = v;
@@ -2369,7 +2410,7 @@ class RecreationsSettingTab extends PluginSettingTab {
           })
       );
     if ((s.seriesLocationMode || 'specified') === 'subfolder') {
-      new Setting(containerEl).setName('Series note subfolder name').addText((t) =>
+      new Setting(containerEl).setName('Series Note Subfolder Name').addText((t) =>
         t.setValue(s.seriesSubfolder).onChange(async (v) => {
           s.seriesSubfolder = v.trim() || 'Series';
           await this.save();
@@ -2378,7 +2419,7 @@ class RecreationsSettingTab extends PluginSettingTab {
     }
     if ((s.seriesLocationMode || 'specified') === 'specified') {
       new Setting(containerEl)
-        .setName('Series note folder')
+        .setName('Series Note Folder')
         .setDesc('Path from the vault root.')
         .addText((t) =>
           t.setValue(s.seriesFolder).onChange(async (v) => {
@@ -2388,14 +2429,14 @@ class RecreationsSettingTab extends PluginSettingTab {
         );
     }
     new Setting(containerEl)
-      .setName('Art location')
+      .setName('Art Location')
       .setDesc('Where the poster and backdrops go. Same folder and subfolder are relative to the film note.')
       .addDropdown((d) =>
         d
-          .addOption('vault', 'Vault folder')
-          .addOption('same', 'Same folder as the note')
-          .addOption('subfolder', 'In subfolder under the note')
-          .addOption('specified', 'In the folder specified below')
+          .addOption('vault', 'Vault Folder')
+          .addOption('same', 'Same Folder as the Note')
+          .addOption('subfolder', 'In Subfolder under the Note')
+          .addOption('specified', 'In the Folder Specified Below')
           .setValue(s.imageLocationMode || 'subfolder')
           .onChange(async (v) => {
             s.imageLocationMode = v;
@@ -2404,7 +2445,7 @@ class RecreationsSettingTab extends PluginSettingTab {
           })
       );
     if ((s.imageLocationMode || 'subfolder') === 'subfolder') {
-      new Setting(containerEl).setName('Art subfolder name').addText((t) =>
+      new Setting(containerEl).setName('Art Subfolder Name').addText((t) =>
         t.setValue(s.imageSubfolder).onChange(async (v) => {
           s.imageSubfolder = v.trim() || 'Images';
           await this.save();
@@ -2413,7 +2454,7 @@ class RecreationsSettingTab extends PluginSettingTab {
     }
     if (s.imageLocationMode === 'specified') {
       new Setting(containerEl)
-        .setName('Art folder')
+        .setName('Art Folder')
         .setDesc('Path from the vault root.')
         .addText((t) =>
           t.setValue(s.imageFolder).onChange(async (v) => {
@@ -2423,9 +2464,9 @@ class RecreationsSettingTab extends PluginSettingTab {
         );
     }
 
-    containerEl.createEl('h3', { text: 'The note' });
+    new Setting(containerEl).setName('The Note').setHeading();
     new Setting(containerEl)
-      .setName('Note name')
+      .setName('Note Name')
       .setDesc('Placeholders: {{title}}, {{year}}.')
       .addText((t) =>
         t.setValue(s.noteNameTemplate).onChange(async (v) => {
@@ -2434,7 +2475,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Poster and backdrop file names')
+      .setName('Poster and Backdrop File Names')
       .setDesc('Placeholders: {{title}}, {{year}}, and {{n}} for the backdrop number (01, 02, …). Saved as WebP. The banner property links the first backdrop.')
       .addText((t) =>
         t.setPlaceholder(DEFAULT_SETTINGS.posterTemplate).setValue(s.posterTemplate).onChange(async (v) => {
@@ -2449,7 +2490,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Labels on the poster and banner links')
+      .setName('Labels on the Poster and Banner Links')
       .setDesc('Written as [[file|Label]], so the properties panel shows the label instead of the file name.')
       .addText((t) =>
         t.setPlaceholder('Poster').setValue(s.posterLabel).onChange(async (v) => {
@@ -2464,7 +2505,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Backdrops per film')
+      .setName('Backdrops per Film')
       .setDesc('TMDB\'s backdrops, most voted first — key art and frames from the film — embedded in the note body as a wall. The first one is also the banner.')
       .addText((t) =>
         t.setValue(String(s.backdropsCount)).onChange(async (v) => {
@@ -2473,7 +2514,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Actors listed')
+      .setName('Actors Listed')
       .setDesc('How many of the cast, in billing order.')
       .addText((t) =>
         t.setValue(String(s.actorsCount)).onChange(async (v) => {
@@ -2482,7 +2523,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Genre names')
+      .setName('Genre Names')
       .setDesc('"TMDB name = your name", one per line. TMDB says Science Fiction where these notes say Sci-Fi.')
       .addTextArea((t) => {
         t.inputEl.rows = 3;
@@ -2500,9 +2541,9 @@ class RecreationsSettingTab extends PluginSettingTab {
           await this.save();
         })
       );
-    containerEl.createEl('h3', { text: 'Series and season notes' });
+    new Setting(containerEl).setName('Series and Season Notes').setHeading();
     new Setting(containerEl)
-      .setName('Season note and poster names')
+      .setName('Season Note and Poster Names')
       .setDesc('Placeholders: {{title}}, {{year}} (the season\'s first-aired year), {{n}} the season number. The series note itself uses the film note name.')
       .addText((t) =>
         t.setPlaceholder(DEFAULT_SETTINGS.seasonNoteNameTemplate).setValue(s.seasonNoteNameTemplate).onChange(async (v) => {
@@ -2517,7 +2558,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Series and season tags')
+      .setName('Series and Season Tags')
       .setDesc('Comma-separated, one box each. A nested tag such as series/season keeps seasons under series in tag searches.')
       .addText((t) =>
         t.setPlaceholder('series').setValue((s.seriesTags || []).join(', ')).onChange(async (v) => {
@@ -2532,7 +2573,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         })
       );
     new Setting(containerEl)
-      .setName('Series note property order')
+      .setName('Series Note Property Order')
       .setDesc('Same rule as the film order: listed properties are written in this order, an own one left out is not written, hand-added ones are kept.')
       .addTextArea((t) => {
         t.inputEl.rows = 2;
@@ -2542,7 +2583,7 @@ class RecreationsSettingTab extends PluginSettingTab {
           await this.save();
         });
       });
-    new Setting(containerEl).setName('Season note property order').addTextArea((t) => {
+    new Setting(containerEl).setName('Season Note Property Order').addTextArea((t) => {
       t.inputEl.rows = 2;
       t.inputEl.style.width = '100%';
       t.setValue(s.seasonNoteOrder).onChange(async (v) => {
@@ -2551,7 +2592,7 @@ class RecreationsSettingTab extends PluginSettingTab {
       });
     });
     new Setting(containerEl)
-      .setName('Series and season default properties')
+      .setName('Series and Season Default Properties')
       .setDesc('"key: value" per line, one box each. Written on every new note; a value already on a note is never changed.')
       .addTextArea((t) => {
         t.inputEl.rows = 3;
@@ -2568,9 +2609,9 @@ class RecreationsSettingTab extends PluginSettingTab {
         });
       });
 
-    containerEl.createEl('h3', { text: 'Film notes' });
+    new Setting(containerEl).setName('Film Notes').setHeading();
     new Setting(containerEl)
-      .setName('Property order')
+      .setName('Property Order')
       .setDesc('Comma-separated. Listed properties are written in this order; one of the plugin\'s own left out is not written at all. Anything you add to a note by hand is always kept.')
       .addTextArea((t) => {
         t.inputEl.rows = 3;
@@ -2581,7 +2622,7 @@ class RecreationsSettingTab extends PluginSettingTab {
         });
       });
     new Setting(containerEl)
-      .setName('Default properties')
+      .setName('Default Properties')
       .setDesc('"key: value" per line, written on every new note so the property exists to be edited. A value already on a note is never changed.')
       .addTextArea((t) => {
         t.inputEl.rows = 4;

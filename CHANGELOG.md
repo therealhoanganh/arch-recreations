@@ -3,7 +3,28 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.3.2 — current
+## 0.3.3 — current
+
+- **Search results can be picked with the keyboard**, from the web-design-guidelines review of 2026-09-27 (`~/Documents/ARCH UI Review.md`), whose whole list he approved: *"Yes, proceed on."* In *Add a Film* and *Add a
+  Series* a result was a box with a click handler: Enter searched, and then the mouse was
+  needed. Now ↓ from the search box (or Tab) reaches the results, ↑ and ↓ move between
+  them and back up to the box, and Enter or Space picks one. A result is highlighted on
+  hover and ringed on focus, from a style element added on load and removed on unload,
+  because a release ships no `styles.css`. Tried with real key presses in TESTFIELD on
+  *Scavengers Reign*: ↓ reached the result, ↑ went back, Enter opened its seasons.
+- **Title Case in every label**, the older commands as well, which 0.3.2 left in sentence
+  case until this review. Commands, setting names and headings, buttons, popup titles and dropdown choices, Chicago style (small words such as *for*, *the*, *before* stay lower case), as in ARCH Images Plus 0.7.6. His preference: *"Actually, I much prefer Title Case."* Descriptions and notices stay sentences, and the ones that name a command or setting use its new name. A hotkey set on a command survives, because Obsidian stores hotkeys by the command's id.
+- **The settings headings are Obsidian's own** (`setHeading`), not plain `h3` text, and the
+  popups' titles are real titles rather than headings drawn inside them. The series popup's
+  *Add* button reads *Add Series*.
+- The search box and the quality dropdown have names (the dropdown sat inside the
+  Radarr/Sonarr checkbox's label, so it had none). A failed search says what to check
+  (the connection, the TMDB API Key) unless its message already does, and "Radarr not
+  configured" reads "Radarr is not set up in settings".
+- A count and its word: "12 episodes", "3 of 5 film notes written", not "episode(s)".
+  No spell-check underlines in the settings, whose fields hold keys, addresses and paths.
+
+## 0.3.2
 
 - **Reload This Tab, on Ctrl+R (Cmd+R on the Mac).** Hoang Anh: *"I want to have a
   reload page/note command hotkey which Obsidian doesn't have by default."* Obsidian
