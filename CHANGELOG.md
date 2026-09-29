@@ -9,6 +9,9 @@ explains what changed at each version and why.
   busy-screen indies, like play on small screen but still big enough."* `play-on` accepts
   Mac (and "macOS", "MacBook" in an imported list), and *Add a Game* offers it. The rule
   behind the places is in CHAOS's `Games/@Where to Play.md`.
+  Then: *"Don't worry about now, this is just for prepare to try in future when I buy new
+  M-chip Mac, right now I will play most on PC instead."* So the choice exists for later and
+  no note says Mac yet; the busy-screen indies are on Linux.
 
 ## 0.4.0
 
