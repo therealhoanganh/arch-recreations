@@ -1253,7 +1253,6 @@ class ArchRecreationsPlugin extends Plugin {
           continue;
         }
         await this.setFields(file, { cover: this.linkFor(f, file.path, 'Cover') }, this.settings.gameNoteOrder, L.GAME_OWN_KEYS);
-        await this.app.vault.process(file, (text) => L.putCoverFirst(text, this.linkFor(f, file.path, '')));
         found.push(file.basename);
       } catch (e) {
         none.push(file.basename);
@@ -1387,7 +1386,6 @@ class ArchRecreationsPlugin extends Plugin {
       // the art it does not show yet: his older game notes were a line or two.
       if (existing instanceof TFile) {
         await this.app.vault.process(file, (text) => {
-          if (coverFile) text = L.putCoverFirst(text, this.linkFor(coverFile, notePath, ''));
           const bodyText = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
           const missing = shotLinks.filter((l) => !bodyText.includes(l.slice(2, -2)));
           return missing.length ? text.replace(/\s*$/, '\n') + missing.map((l) => `!${l}`).join('\n') + '\n' : text;
@@ -3253,7 +3251,7 @@ class RecreationsSettingTab extends PluginSettingTab {
       );
     new Setting(containerEl)
       .setName('Screenshots per Game')
-      .setDesc('Saved 1920 pixels wide, under the cover in the note.')
+      .setDesc('Saved 1920 pixels wide, in the note\'s body. The cover is a property only.')
       .addText((t) =>
         t.setValue(String(s.gameScreenshotsCount)).onChange(async (v) => {
           const n = parseInt(v, 10);

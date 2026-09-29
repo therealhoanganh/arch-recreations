@@ -3,7 +3,16 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.4.2 — current
+## 0.4.3 — current
+
+- **The cover is a property only, not in the body.** His words, 2026-09-29: *"Also remove cover
+  image in game note for me, it clutters the note prevent me to see game screenshots
+  quickly."* `gameNoteBody` writes the screenshots alone, and neither an import into an
+  existing note nor *Find Covers for Games without One* puts the cover in the body any more.
+  The cover embed was taken out of his 183 notes by hand; `cover` stays for the base's
+  *Covers* view.
+
+## 0.4.2
 
 - **Switch covers from GameTDB.** He asked, 2026-09-29: *"Also I don't find nintendo games in
   our base anymore."* He had made the CHAOS base's *Covers* view the first, and it showed only

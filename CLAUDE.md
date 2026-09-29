@@ -310,6 +310,8 @@ His plan and answers are in `᭄᭡ CHAOS/CHAOS Plans.md`, item 8; the design in
   `switchtdb.xml` is cached in the plugin folder (gitignored).
 - A game note is recognised by its `URL` holding `rawg.io/games/<slug>`, as a film's by
   its TMDB URL.
+- **The cover is a property, never in the body** (0.4.3): in the body it hid the
+  screenshots, which are what he opens a game note for.
 - Note names are RAWG's name without its disambiguation, no year (the h-games have none,
   and neither did his older game notes).
 
@@ -531,7 +533,7 @@ gh release create <version> dist/main.js dist/manifest.json --title <version> --
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.4.2 is current** (0.4.2 adds Switch covers from GameTDB; 0.4.1 adds Mac to `play-on`; 0.4.0 adds games, see *Games (0.4.0)* above; 0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
+**Release 0.4.3 is current** (0.4.3 keeps the cover out of the body, his wish; 0.4.2 adds Switch covers from GameTDB; 0.4.1 adds Mac to `play-on`; 0.4.0 adds games, see *Games (0.4.0)* above; 0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
 through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
 symlink.
 
