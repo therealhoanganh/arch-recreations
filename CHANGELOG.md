@@ -3,7 +3,52 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.3.4 — current
+## 0.4.0 — current
+
+- **Games**, the first kind after films and series, for CHAOS only. He asked on
+  2026-09-29: *"Let's work on games. Like H-games, I want to create a library first, then we
+  will move to Proton and Backup that will apply to both normal and h-games."* Asked where the
+  code should live, he chose this plugin: *"I think we should, simplify thing, only CHAOS use
+  this plugin so no need to care about universality."* His plan and answers are in
+  `᭄᭡ CHAOS/CHAOS Plans.md`, item 8.
+  - **RAWG for the facts, Steam's image server for the art.** Steam's store is blocked on his
+    network (`store.steampowered.com` resolves to 127.0.0.1), but `cdn.akamai.steamstatic.com`
+    is not, so a game whose RAWG store list has a Steam page gets Steam's library cover
+    (`library_600x900_2x.jpg`) and banner (`library_hero.jpg`); others get RAWG's background as
+    the banner and no cover. Screenshots come from RAWG resized to 1920 wide
+    (`media.rawg.io/media/resize/1920/-/…`), a seventh of the original's bytes.
+  - **The note**: `description`, `release-date`, `weighted-rating`, `rating`, `ratings-count`,
+    `metacritic`, `play-on`, `rank`, `banner-p`, `genres`, `developers`, `publishers`,
+    `platforms`, `banner`, `cover`, `URL` (RAWG), tag `game`; the body the cover and
+    screenshots. **No status property**, his word: *"no need, like for Baldur's Gate 3, even
+    though I spend like 150 hours finishing it, I will have this melancholic nostaliga and want
+    to play it again some day"*, and not *"these bland "Completed" or "To Play" status"*.
+  - **`play-on`** is his Notion list's category, *"desirable place to play"*: Linux (his
+    Window and Steam Deck, at his word, since he will not buy a Steam Deck), Nintendo,
+    RetroArch, PlayStation, Virtual. `play-on`, `cover` and `banner` are kept once a note has
+    them (`writeMovieNote`'s new `keep`), so his own choices and art survive a re-import;
+    Dispatch kept its hand-made cover and banner that way.
+  - **`weighted-rating`** has the h-games' shape (ARCH Adult Contents): a Bayesian average
+    towards the library's mean, plus 0.1 per tenfold more "added" than the library's median.
+    The mean and median are measured from his notes after each import or refresh.
+  - **Matching his titles** (`lib/games.js::pickGame`): exact after folding case, accents,
+    punctuation, apostrophes and roman numerals; RAWG's own "(2018)" and "(itch)" ignored;
+    plurals and joined words the same (No Man Sky, Rim World); add-ons, demos and demakes
+    never picked unless his title says so. RAWG's search misses some famous games (The Last
+    Guardian, Bloodborne, Persona 5 Royal, Yakuza Kiwami), so the game at the address his
+    title would have is tried beside it. A pick with fewer than 10 people behind it, a
+    starts-with match, or a same-named rival with a following is written but listed *to
+    check*: the dry run on his 203 games found a jam game called *Fall Out* and a
+    one-person *God Of War* that way. A RAWG address on a line pins the game.
+  - Commands: *Add a Game* (search, pick, Play On), *Import a List of Games* (report under his
+    list in `Games/@Import.md`), *Refresh Game Ratings from RAWG*. A note of his own under his
+    name, without a RAWG URL, is renamed to RAWG's name and filled in rather than written
+    beside (The Witcher 3); its body is kept, and the art it does not show yet is added at
+    the end.
+  - `writeMovieNote` and `setFields` take the kind's own keys, so a game's keys are not the
+    film's.
+
+## 0.3.4
 
 - **Prowlarr is started when Radarr or Sonarr needs it**, like Radarr, Sonarr and
   Transmission already were. On 2026-09-27 he took Radarr and two others off his macOS

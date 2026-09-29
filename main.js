@@ -79,6 +79,24 @@ const DEFAULT_SETTINGS = {
   // be edited. A value already on a note is never changed.
   movieNoteDefaults: 'watched: false\nrank: 0\nbanner-p: 50',
 
+  // Games (0.4.0), for CHAOS only: RAWG for the facts, Steam's image server for
+  // the cover and banner. No status property, at his word (2026-09-29): "not
+  // these bland Completed or To Play status".
+  rawgApiKey: '',
+  gameFolder: 'Games',
+  gameScreenshotsCount: 5,
+  gameTags: ['game'],
+  gameGenreMap: '',
+  gameNoteOrder: 'description, release-date, weighted-rating, rating, ratings-count, metacritic, play-on, rank, banner-p, genres, developers, publishers, platforms, banner, cover, URL, tags',
+  gameNoteDefaults: 'rank: 0\nbanner-p: 50',
+  // weighted-rating, the h-games' shape: the library's mean rating, how many
+  // votes count as much as that prior, and a small lift for popularity
+  // (RAWG's "added"), measured from the library after each import or refresh.
+  gameWrAverage: 3.9,
+  gameWrPrior: 10,
+  gameWrPopularityWeight: 0.1,
+  gameWrPopularityMedian: 1000,
+
   setupDone: false,
 };
 
@@ -186,6 +204,15 @@ class ArchRecreationsPlugin extends Plugin {
       callback: () => this.addPlots().catch((e) => this.fail(e)),
     });
     this.addCommand({ id: 'detect-radarr', name: 'Detect Radarr', callback: () => this.detectRadarr(true) });
+
+    // Games (0.4.0)
+    this.addCommand({ id: 'add-game', name: 'Add a Game', callback: () => this.openAddGame() });
+    this.addCommand({ id: 'import-games', name: 'Import a List of Games', callback: () => this.openImportGames() });
+    this.addCommand({
+      id: 'refresh-games',
+      name: 'Refresh Game Ratings from RAWG',
+      callback: () => this.refreshGames().catch((e) => this.fail(e)),
+    });
 
     // Reload the tab in front, as a browser's reload does: a note is read and
     // drawn again, a Base runs again (a shuffled gallery reshuffles). Obsidian
@@ -1094,6 +1121,314 @@ class ArchRecreationsPlugin extends Plugin {
     return { posterFile, links, backdropLinks };
   }
 
+  /* ---------------- games (0.4.0) ---------------- */
+
+  rawg(pathname, params = {}) {
+    if (!this.settings.rawgApiKey) throw new Error('No RAWG API key in settings. Get one free at rawg.io/apidocs, then paste it under Games.');
+    const q = new URLSearchParams({ key: this.settings.rawgApiKey, ...params });
+    return this.json({ url: `${this.lib().RAWG}${pathname}?${q}` });
+  }
+
+  async searchGames(query) {
+    const r = await this.rawg('/games', { search: query, page_size: '20', exclude_additions: 'true' });
+    return r.results || [];
+  }
+
+  // One game by its RAWG address (slug) or id, following RAWG's redirect from an
+  // old address. null when RAWG has nothing there.
+  async rawgGame(slug, depth = 0) {
+    let d;
+    try {
+      d = await this.rawg(`/games/${encodeURIComponent(slug)}`);
+    } catch (e) {
+      if (/HTTP 404/.test(e.message)) return null;
+      throw e;
+    }
+    if (d && d.redirect && d.slug && depth < 3) return this.rawgGame(d.slug, depth + 1);
+    return d && d.id ? d : null;
+  }
+
+  // The search, plus the game at the address his title would have: RAWG's
+  // search misses some famous games (The Last Guardian, Bloodborne, Persona 5
+  // Royal) that their address finds.
+  async findGame(title) {
+    const L = this.lib();
+    const results = await this.searchGames(title);
+    for (const s of L.slugGuesses(title)) {
+      if (results.some((r) => r.slug === s)) continue;
+      const d = await this.rawgGame(s);
+      if (d && !results.some((r) => r.id === d.id)) results.push(d);
+    }
+    return L.pickGame(title, results);
+  }
+
+  gameFolder() {
+    return this.cleanFolder(this.settings.gameFolder) || 'Games';
+  }
+
+  wrOptions() {
+    const s = this.settings;
+    return { average: s.gameWrAverage, prior: s.gameWrPrior, popularityWeight: s.gameWrPopularityWeight, popularityMedian: s.gameWrPopularityMedian };
+  }
+
+  // Every note the plugin wrote for a game: the `game` tag and a RAWG URL.
+  gameNotes() {
+    const L = this.lib();
+    const out = [];
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+      const slug = fm && L.rawgSlugFromText(fm.URL);
+      if (slug) out.push({ file: f, slug });
+    }
+    return out;
+  }
+
+  openAddGame() {
+    if (!this.settings.rawgApiKey) {
+      new Notice('Put your RAWG API key in the ARCH Recreations settings (Games) first.', 8000);
+      return;
+    }
+    new AddGameModal(this.app, this).open();
+  }
+
+  openImportGames() {
+    if (!this.settings.rawgApiKey) {
+      new Notice('Put your RAWG API key in the ARCH Recreations settings (Games) first.', 8000);
+      return;
+    }
+    new ImportGamesModal(this.app, this).open();
+  }
+
+  // The whole thing for one game: details, art, note. `ref` is a RAWG slug or a
+  // game object from RAWG. `opts.oldName` is his own name for it: a note of
+  // that name without a RAWG URL is his older note, renamed to RAWG's name (the
+  // links follow) and filled in rather than written beside.
+  async addGame(ref, playOn, opts = {}) {
+    const open = opts.open !== false;
+    const L = this.lib();
+    let full = typeof ref === 'object' && ref && ref.description_raw !== undefined ? ref : await this.rawgGame(typeof ref === 'object' ? ref.slug : ref);
+    if (!full) throw new Error(`RAWG has no game at ${typeof ref === 'object' ? ref.slug : ref}.`);
+    const key = `rawg:${full.id}`;
+    if (this.inFlight.has(key)) {
+      new Notice('That game is already being added.');
+      return null;
+    }
+    this.inFlight.add(key);
+    try {
+      const [stores, shots] = await Promise.all([
+        this.rawg(`/games/${full.id}/stores`).catch((e) => (this.log('no store list:', e.message), { results: [] })),
+        this.rawg(`/games/${full.id}/screenshots`).catch((e) => (this.log('no screenshots:', e.message), { results: [] })),
+      ]);
+      const game = L.gameFromRawg(full, {
+        storeUrls: (stores.results || []).map((x) => x.url),
+        screenshots: (shots.results || []).slice(0, Math.max(0, Number(this.settings.gameScreenshotsCount) || 0)),
+      });
+      const title = L.safeFileName(L.bareTitle(game.name));
+      const folder = this.gameFolder();
+      await this.ensureFolder(folder);
+      const notePath = normalizePath(`${folder}/${title}.md`);
+
+      if (opts.oldName && !(this.app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
+        const oldPath = normalizePath(`${folder}/${L.safeFileName(opts.oldName)}.md`);
+        const old = this.app.vault.getAbstractFileByPath(oldPath);
+        const oldFm = old instanceof TFile ? this.app.metadataCache.getFileCache(old)?.frontmatter : null;
+        if (old instanceof TFile && oldPath !== notePath && !(oldFm && L.rawgSlugFromText(oldFm.URL))) {
+          const was = old.basename;
+          await this.app.fileManager.renameFile(old, notePath);
+          this.log(`his note "${was}" renamed to RAWG's name:`, notePath);
+        }
+      }
+      const existing = this.app.vault.getAbstractFileByPath(notePath);
+      const fmNow = existing instanceof TFile ? this.app.metadataCache.getFileCache(existing)?.frontmatter || {} : {};
+
+      const imageFolder = this.resolveImageFolder(folder);
+      await this.ensureFolder(imageFolder);
+      const save = async (url, stem) => {
+        if (!url) return null;
+        try {
+          return await this.saveImage(url, imageFolder, L.safeFileName(stem));
+        } catch (e) {
+          this.log(`image failed (${stem}):`, e.message);
+          return null;
+        }
+      };
+      const links = {};
+      let coverFile = null;
+      if (!fmNow.cover) {
+        coverFile = await save(game.cover, `${title} Cover`);
+        if (coverFile) links.cover = this.linkFor(coverFile, notePath, 'Cover');
+      } else this.log('kept the cover the note already has:', notePath);
+      if (!fmNow.banner) {
+        // Steam's library banner when it has one, RAWG's background otherwise.
+        let f = await save(game.steamBanner, `${title} Banner`);
+        if (!f) f = await save(game.rawgBanner, `${title} Banner`);
+        if (f) links.banner = this.linkFor(f, notePath, this.settings.bannerLabel);
+      } else this.log('kept the banner the note already has:', notePath);
+      const shotLinks = [];
+      for (let i = 0; i < game.screenshots.length; i++) {
+        const f = await save(game.screenshots[i], `${title} Screenshot ${String(i + 1).padStart(2, '0')}`);
+        if (f) shotLinks.push(this.linkFor(f, notePath, ''));
+      }
+
+      const fields = L.gameNoteFields(game, links, {
+        tags: this.settings.gameTags,
+        playOn,
+        weighted: L.weightedRating(game.rating, game.votes, game.added, this.wrOptions()),
+        genreMap: L.parseRenameMap(this.settings.gameGenreMap),
+      });
+      const body = L.gameNoteBody(coverFile ? this.linkFor(coverFile, notePath, '') : '', shotLinks);
+      const file = await this.writeMovieNote(notePath, fields, body, this.settings.gameNoteOrder, this.settings.gameNoteDefaults, L.GAME_OWN_KEYS, new Set(['play-on', 'cover', 'banner']));
+      // A note he had before keeps its body, and gets at the end whichever of
+      // the art it does not show yet: his older game notes were a line or two.
+      if (existing instanceof TFile) {
+        const wall = [coverFile ? this.linkFor(coverFile, notePath, '') : '', ...shotLinks].filter(Boolean);
+        await this.app.vault.process(file, (text) => {
+          const bodyText = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
+          const missing = wall.filter((l) => !bodyText.includes(l.slice(2, -2)));
+          return missing.length ? text.replace(/\s*$/, '\n') + missing.map((l) => `!${l}`).join('\n') + '\n' : text;
+        });
+      }
+      this.log(`game ${game.name}: ${links.cover ? 'cover, ' : ''}${links.banner ? 'banner, ' : ''}${shotLinks.length} screenshot(s), note ${file.path}`);
+      if (open) {
+        new Notice(`${game.name} added.`, 5000);
+        await this.app.workspace.getLeaf(false).openFile(file);
+      }
+      return { file, game };
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
+
+  // His list, one game a line. Each is searched and picked by lib::pickGame;
+  // a pick a person should look at is still written, and listed in the report
+  // with what else RAWG had, so he fixes it by putting the right RAWG address on
+  // that line and importing the line again. The report goes under his list in
+  // `@Import.md` in the games folder.
+  async importGames(text) {
+    const L = this.lib();
+    const list = L.parseGameList(text);
+    if (!list.length) {
+      new Notice('No games in that list.');
+      return;
+    }
+    const status = new Notice(`Importing ${plural(list.length, 'game')}…`, 0);
+    const report = { sure: [], check: [], missing: [], failed: [] };
+    const stats = new Map();
+    for (let i = 0; i < list.length; i++) {
+      const g = list[i];
+      status.setMessage(`Importing games: ${i + 1} of ${list.length}, ${g.title}`);
+      try {
+        let pick;
+        let sure;
+        let others = [];
+        if (g.slug) {
+          pick = await this.rawgGame(g.slug);
+          sure = !!pick;
+        } else ({ pick, sure, others } = await this.findGame(g.search));
+        if (!pick) {
+          report.missing.push({ g });
+          this.log(`no game found for "${g.title}"`);
+          continue;
+        }
+        const res = await this.addGame(pick, g.playOn, { open: false, oldName: g.title });
+        if (!res) continue;
+        stats.set(res.game.slug, res.game);
+        (sure ? report.sure : report.check).push({ g, file: res.file, game: res.game, others });
+      } catch (e) {
+        report.failed.push({ g, error: e.message });
+        this.log(`import failed for "${g.title}":`, e.message);
+      }
+    }
+    status.hide();
+    await this.refreshGames(stats);
+    await this.writeImportReport(report);
+    new Notice(`Games: ${report.sure.length + report.check.length} written, ${report.check.length} to check, ${report.missing.length} not found, ${report.failed.length} failed. The report is in ${this.gameFolder()}/@Import.md.`, 15000);
+  }
+
+  async writeImportReport(report) {
+    const folder = this.gameFolder();
+    const p = normalizePath(`${folder}/@Import.md`);
+    const year = (g) => (g.year ? ` (${g.year})` : '');
+    const other = (xs) => (xs || []).map((r) => `${r.name}${r.released ? ` (${String(r.released).slice(0, 4)})` : ''} rawg.io/games/${r.slug}`).join('; ');
+    const lines = [`## Import report, ${new Date().toISOString().slice(0, 10)}`, ''];
+    lines.push(`${report.sure.length + report.check.length} written, ${report.check.length} to check, ${report.missing.length} not found, ${report.failed.length} failed. To fix a pick, put the right RAWG address on the game's line (\`Title<TAB>Place<TAB>https://rawg.io/games/…\`) and import that line again.`, '');
+    if (report.check.length) {
+      lines.push('### To check', '');
+      for (const x of report.check) lines.push(`- [[${x.file.basename}]] for "${x.g.title}": RAWG's ${x.game.name}${year(x.game)}${x.others && x.others.length ? `. Also: ${other(x.others)}` : ''}`);
+      lines.push('');
+    }
+    if (report.missing.length) {
+      lines.push('### Not found', '');
+      for (const x of report.missing) lines.push(`- "${x.g.title}" (${x.g.playOn || 'no place'})`);
+      lines.push('');
+    }
+    if (report.failed.length) {
+      lines.push('### Failed', '');
+      for (const x of report.failed) lines.push(`- "${x.g.title}": ${x.error}`);
+      lines.push('');
+    }
+    const text = lines.join('\n');
+    const f = this.app.vault.getAbstractFileByPath(p);
+    if (f instanceof TFile) {
+      await this.app.vault.process(f, (old) => {
+        const at = old.search(/^## Import report, /m);
+        return (at >= 0 ? old.slice(0, at).replace(/\s*$/, '\n\n') : old.replace(/\s*$/, '\n\n')) + text;
+      });
+    } else await this.app.vault.create(p, `# Games to import\n\n${text}`);
+  }
+
+  // Ratings move; this reads them again for every game note and works out the
+  // weighted-rating with the library's own mean and median, so a game is
+  // measured against his library, as the h-games are. `known` holds games
+  // already fetched in this run (an import), which are not asked for again.
+  async refreshGames(known = new Map()) {
+    const L = this.lib();
+    const notes = this.gameNotes();
+    if (!notes.length) return;
+    const status = new Notice(`Reading ${plural(notes.length, 'game')} from RAWG…`, 0);
+    const games = new Map(known);
+    let n = 0;
+    for (const { slug } of notes) {
+      n++;
+      if (games.has(slug)) continue;
+      status.setMessage(`Reading games from RAWG: ${n} of ${notes.length}`);
+      try {
+        const d = await this.rawgGame(slug);
+        if (d) games.set(slug, L.gameFromRawg(d));
+      } catch (e) {
+        this.log(`could not read ${slug}:`, e.message);
+      }
+    }
+    const rated = [...games.values()].filter((g) => g.rating && g.votes);
+    if (rated.length >= 5) {
+      const mean = rated.reduce((a, g) => a + g.rating, 0) / rated.length;
+      const added = [...games.values()].map((g) => g.added || 0).sort((a, b) => a - b);
+      const median = added[Math.floor(added.length / 2)] || 1;
+      this.settings.gameWrAverage = Math.round(mean * 100) / 100;
+      this.settings.gameWrPopularityMedian = median;
+      await this.saveSettings();
+      this.log(`weighted-rating measured from ${rated.length} rated games: mean ${this.settings.gameWrAverage}, median added ${median}`);
+    }
+    const o = this.wrOptions();
+    let changed = 0;
+    for (const { file, slug } of notes) {
+      const g = games.get(slug);
+      if (!g) continue;
+      const fields = {
+        'weighted-rating': L.weightedRating(g.rating, g.votes, g.added, o),
+        rating: g.votes ? g.rating : null,
+        'ratings-count': g.votes || null,
+        metacritic: g.metacritic || null,
+      };
+      for (const k of Object.keys(fields)) if (fields[k] === null) delete fields[k];
+      await this.setFields(file, fields, this.settings.gameNoteOrder, L.GAME_OWN_KEYS);
+      changed++;
+    }
+    status.hide();
+    this.log(`ratings refreshed on ${plural(changed, 'game note')}`);
+    if (!known.size) new Notice(`Ratings refreshed on ${plural(changed, 'game note')}.`, 6000);
+  }
+
   /* ---------------- adding a film ---------------- */
 
   openAddMovie() {
@@ -1192,14 +1527,19 @@ class ArchRecreationsPlugin extends Plugin {
   // A new note gets defaults, the plugin's fields and the backdrop wall. A note
   // that already exists keeps its body and every property it holds; only the
   // plugin's own fields are refreshed. Hand-edited values are never touched.
-  async writeMovieNote(notePath, fields, body, order = this.settings.movieNoteOrder, defaultsRaw = this.settings.movieNoteDefaults) {
+  // `own` is the plugin's own keys for this kind of note (games have theirs);
+  // `keep` names own keys a note keeps when it already has a value: a game's
+  // `play-on` once he has set it, the cover and banner he chose by hand.
+  async writeMovieNote(notePath, fields, body, order = this.settings.movieNoteOrder, defaultsRaw = this.settings.movieNoteDefaults, own = null, keep = null) {
     const L = this.lib();
+    const ownKeys = own || L.OWN_KEYS;
     const defaults = L.parseDefaults(defaultsRaw);
     const existing = this.app.vault.getAbstractFileByPath(notePath);
     if (existing instanceof TFile) {
       await this.app.fileManager.processFrontMatter(existing, (fm) => {
         for (const [k, v] of Object.entries(fields)) {
           if (v === undefined || v === null || v === '') continue;
+          if (keep && keep.has(k) && fm[k] !== undefined && fm[k] !== null && fm[k] !== '') continue;
           if (k === 'tags') {
             const had = [].concat(fm.tags ?? []).map((t) => String(t).replace(/^#+/, '').trim()).filter(Boolean);
             fm.tags = [...had, ...v.filter((t) => !had.includes(t))];
@@ -1208,13 +1548,13 @@ class ArchRecreationsPlugin extends Plugin {
           } else fm[k] = v;
         }
         L.addMissingDefaults(fm, defaults);
-        L.applyOrder(fm, order, L.OWN_KEYS);
+        L.applyOrder(fm, order, ownKeys);
       });
       this.log('note existed, properties refreshed and body left alone:', notePath);
       return existing;
     }
     const fm = { ...defaults, ...fields };
-    L.applyOrder(fm, order, L.OWN_KEYS);
+    L.applyOrder(fm, order, ownKeys);
     await this.app.vault.create(notePath, L.buildFrontmatter(fm) + (body ? '\n' + body : ''));
     const file = this.app.vault.getAbstractFileByPath(notePath);
     return file;
@@ -1274,11 +1614,11 @@ class ArchRecreationsPlugin extends Plugin {
     return { done, empty };
   }
 
-  async setFields(file, fields, order = this.settings.movieNoteOrder) {
+  async setFields(file, fields, order = this.settings.movieNoteOrder, own = null) {
     const L = this.lib();
     await this.app.fileManager.processFrontMatter(file, (fm) => {
       for (const [k, v] of Object.entries(fields)) fm[k] = v;
-      L.applyOrder(fm, order, L.OWN_KEYS);
+      L.applyOrder(fm, order, own || L.OWN_KEYS);
     });
   }
 
@@ -2245,6 +2585,123 @@ class AddSeriesModal extends Modal {
 
 /* ---------------- settings ---------------- */
 
+/* ---------------- games (0.4.0) ---------------- */
+
+const PLAY_ON_CHOICES = ['', 'Linux', 'Nintendo', 'RetroArch', 'PlayStation', 'Virtual'];
+
+// Search RAWG, pick, and say where he would play it. The results show the year
+// and how many people added the game, since RAWG has many same-named copies.
+class AddGameModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    this.titleEl.setText('Add a Game');
+    const row = contentEl.createDiv();
+    row.style.display = 'flex';
+    row.style.gap = '6px';
+    const input = row.createEl('input', { type: 'text', placeholder: 'Title, e.g. Hollow Knight…', attr: { 'aria-label': 'Game title', spellcheck: 'false' } });
+    input.style.flex = '1';
+    const searchBtn = row.createEl('button', { text: 'Search' });
+    const options = contentEl.createDiv();
+    options.style.marginTop = '8px';
+    const label = options.createEl('label', { text: 'Play On ' });
+    const place = label.createEl('select', { attr: { 'aria-label': 'Play on' } });
+    for (const p of PLAY_ON_CHOICES) place.createEl('option', { text: p || '(not set)', value: p });
+    const list = contentEl.createDiv({ attr: { 'aria-live': 'polite' } });
+    list.style.marginTop = '10px';
+    list.style.maxHeight = '50vh';
+    list.style.overflowY = 'auto';
+
+    const run = async () => {
+      const q = input.value.trim();
+      if (!q) return;
+      list.empty();
+      list.createDiv({ text: 'Searching\u2026' });
+      let results;
+      try {
+        const L = this.plugin.lib();
+        const slug = L.rawgSlugFromText(q);
+        if (slug) {
+          const d = await this.plugin.rawgGame(slug);
+          results = d ? [d] : [];
+        } else results = await this.plugin.searchGames(q);
+      } catch (e) {
+        list.empty();
+        list.createDiv({ text: /settings/i.test(e.message) ? e.message : `${e.message} Check the connection, and the RAWG API Key in settings.` });
+        return;
+      }
+      list.empty();
+      if (!results.length) {
+        list.createDiv({ text: 'Nothing found. A RAWG address (rawg.io/games/…) works here too.' });
+        return;
+      }
+      for (const r of results) {
+        const year = String(r.released || '').slice(0, 4);
+        const item = resultItem(list, { title: r.name, year, overview: `${(r.added || 0).toLocaleString()} added on RAWG${r.rating ? `, rated ${r.rating}` : ''}` }, input, () => {
+          this.close();
+          this.plugin.addGame(r.slug, place.value).catch((e) => this.plugin.fail(e));
+        });
+        item.setAttr('title', `rawg.io/games/${r.slug}`);
+      }
+    };
+    searchBtn.addEventListener('click', run);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      } else if (e.key === 'ArrowDown') {
+        const first = list.querySelector('.arch-recreations-result');
+        if (first) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    input.focus();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+// A list pasted in, one game a line: "Title<TAB>Place", as his Notion export
+// gives it, optionally with a RAWG address to pin the game.
+class ImportGamesModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    this.titleEl.setText('Import a List of Games');
+    contentEl.createEl('p', { text: 'One game a line: the title, then where you would play it (Linux, Nintendo, RetroArch, PlayStation, Virtual; Window and Steam Deck count as Linux), separated by a tab or " | ". A RAWG address on a line picks that game exactly. A report of picks to check goes into @Import.md in the games folder.' });
+    const area = contentEl.createEl('textarea', { attr: { rows: '14', spellcheck: 'false', 'aria-label': 'List of games' } });
+    area.style.width = '100%';
+    const row = contentEl.createDiv();
+    row.style.marginTop = '8px';
+    row.style.textAlign = 'right';
+    const go = row.createEl('button', { text: 'Import', cls: 'mod-cta' });
+    go.addEventListener('click', () => {
+      const text = area.value;
+      this.close();
+      this.plugin.importGames(text).catch((e) => this.plugin.fail(e));
+    });
+    area.focus();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 class RecreationsSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -2669,6 +3126,60 @@ class RecreationsSettingTab extends PluginSettingTab {
           await this.save();
         });
       });
+
+    new Setting(containerEl).setName('Games').setHeading();
+    new Setting(containerEl)
+      .setName('RAWG API Key')
+      .setDesc('Free, from rawg.io/apidocs. Everything about a game comes from here; the cover and banner come from Steam\'s image server when RAWG knows the game\'s Steam page.')
+      .addText((t) =>
+        t.setValue(s.rawgApiKey).onChange(async (v) => {
+          s.rawgApiKey = v.trim();
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('Games Folder')
+      .setDesc('Where game notes go. The art goes in its Images subfolder, as the Art settings above say.')
+      .addText((t) =>
+        t.setValue(s.gameFolder).onChange(async (v) => {
+          s.gameFolder = v.trim() || 'Games';
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('Screenshots per Game')
+      .setDesc('Saved 1920 pixels wide, under the cover in the note.')
+      .addText((t) =>
+        t.setValue(String(s.gameScreenshotsCount)).onChange(async (v) => {
+          const n = parseInt(v, 10);
+          s.gameScreenshotsCount = Number.isFinite(n) && n >= 0 ? n : 5;
+          await this.save();
+        })
+      );
+    new Setting(containerEl)
+      .setName('Game Property Order')
+      .setDesc('Comma-separated, as for films. play-on, cover and banner are kept once a note has them, so your own choices survive an import.')
+      .addTextArea((t) => {
+        t.inputEl.rows = 3;
+        t.inputEl.style.width = '100%';
+        t.setValue(s.gameNoteOrder).onChange(async (v) => {
+          s.gameNoteOrder = v;
+          await this.save();
+        });
+      });
+    new Setting(containerEl)
+      .setName('Game Default Properties')
+      .setDesc('"key: value" per line, written on every new game note.')
+      .addTextArea((t) => {
+        t.inputEl.rows = 3;
+        t.setValue(s.gameNoteDefaults).onChange(async (v) => {
+          s.gameNoteDefaults = v;
+          await this.save();
+        });
+      });
+    new Setting(containerEl)
+      .setName('Weighted Rating')
+      .setDesc(`Measured from your library at each import or refresh: mean rating ${s.gameWrAverage}, median "added" ${s.gameWrPopularityMedian}. A game's weighted-rating is its rating pulled towards that mean when few have voted (${s.gameWrPrior} votes count as much as the mean), plus ${s.gameWrPopularityWeight} per tenfold more people than the median who added it.`);
   }
 }
 

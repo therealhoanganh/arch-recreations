@@ -1,10 +1,11 @@
 # ARCH Recreations — working notes
 
-An Obsidian plugin for a film and series library in the vault: look a title up
-on TMDB, write the note in the user's shape with full-size poster, banner and
-backdrops saved into the vault, hand the download to Radarr (films) or Sonarr
-(series), and fetch the subtitles when the files land. Games, anime, manga and
-music are intended later and none of that is designed yet.
+An Obsidian plugin for a film, series and game library in the vault: look a title
+up on TMDB (or RAWG, for games), write the note in the user's shape with full-size
+art saved into the vault, hand the download to Radarr (films) or Sonarr (series),
+and fetch the subtitles when the files land. Anime, manga and music are intended
+later and none of that is designed yet. It is used in CHAOS only, so nothing here
+needs to suit another vault (his answer, 2026-09-29).
 
 Read `CHANGELOG.md` before changing behaviour. Read `../CLAUDE.md` for what is
 shared by the whole ARCH family — folder-setting shape, minimal frontmatter,
@@ -278,6 +279,32 @@ Subtitles for twelve episodes cost twelve of the day's hundred OpenSubtitles
 downloads; a long series will run out and pick up the next day, which is what
 "put off" in the log means.
 
+## Games (0.4.0), and what RAWG taught
+
+His plan and answers are in `᭄᭡ CHAOS/CHAOS Plans.md`, item 8; the design in
+`CHANGELOG.md`, 0.4.0. What a change has to respect:
+
+- **Steam's store is blocked on his network; Steam's image server is not.**
+  `store.steampowered.com` and `steamcommunity.com` resolve to 127.0.0.1 here, so no
+  Steam API. RAWG (`api.rawg.io`, his free key in settings) gives the facts and, through
+  `/games/<id>/stores`, the Steam app id, which is enough for
+  `cdn.akamai.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (cover) and
+  `library_hero.jpg` (banner). Older games have them only at 600×900 and 1920×620.
+- **No status property.** He refused one: *"not these bland "Completed" or "To Play"
+  status"*. What will take its place is his Sparks System, not designed yet. Do not add
+  `played`, `status` or `watched` to game notes.
+- **`play-on` is his, once set**: an import writes it only on a note without one; so are
+  `cover` and `banner` (Dispatch's are hand-made PNGs).
+- **RAWG's search is weak and its names are noisy.** It misses famous games that its
+  address (`/games/<slug>`) finds, returns demos, DLC and itch copies under the same name,
+  and appends "(2018)" or "(itch)" to tell copies apart. `lib/games.js::pickGame` and
+  `slugGuesses` handle each of those; every rule came from his list. RAWG answers an old
+  address with `{redirect: true, slug}`, which `rawgGame` follows.
+- A game note is recognised by its `URL` holding `rawg.io/games/<slug>`, as a film's by
+  its TMDB URL.
+- Note names are RAWG's name without its disambiguation, no year (the h-games have none,
+  and neither did his older game notes).
+
 ## Bringing an existing library in
 
 Three commands write notes for what's already there rather than for
@@ -496,7 +523,7 @@ gh release create <version> dist/main.js dist/manifest.json --title <version> --
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.3.4 is current** (0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
+**Release 0.4.0 is current** (0.4.0 adds games, see *Games (0.4.0)* above; 0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
 through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
 symlink.
 
@@ -540,4 +567,4 @@ Still loose:
 - The *Add a series* dialog and the two per-note download commands have not been
   clicked by a human; the code beneath them ran through the CLI.
 - Solo's 4K upgrade, if one appears: *The 4K films on the drive*, above.
-- Games, anime, manga and music are not designed.
+- Anime, manga and music are not designed.
