@@ -3,7 +3,23 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.4.1 — current
+## 0.4.2 — current
+
+- **Switch covers from GameTDB.** He asked, 2026-09-29: *"Also I don't find nintendo games in
+  our base anymore."* He had made the CHAOS base's *Covers* view the first, and it showed only
+  games with a cover; covers came from Steam's image server alone, so 48 games, mostly
+  Nintendo exclusives, had none and were not in it. GameTDB needs no key: its database of
+  Switch releases (`switchtdb.zip`, one XML file, fetched once a month into the plugin's folder
+  and unzipped with the system's `unzip`) gives a game's id, and
+  `art.gametdb.com/switch/coverHQ/US/<id>.jpg` its box art at 1166×1888. A game on the Switch
+  without a Steam cover now gets one there, in *Add a Game* and the import alike, and the new
+  command *Find Covers for Games without One* filled 29 of his notes. Titles are compared as
+  RAWG's are, with ™ and ® left out (NFKD made "™" into "tm"), and "Pokémon Scarlet and
+  Violet" takes Scarlet's box. The cover goes at the top of the body, as in a new note.
+  19 games still have none: PlayStation and retro games, and a few RAWG does not list for the
+  Switch.
+
+## 0.4.1
 
 - **Mac is a place to play.** His words, 2026-09-29: *"I think play on Mac could work for
   busy-screen indies, like play on small screen but still big enough."* `play-on` accepts

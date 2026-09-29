@@ -12,3 +12,4 @@ node_modules/
 
 # Release build output; produced by `npm run build`, attached to releases
 dist/
+switchtdb.xml

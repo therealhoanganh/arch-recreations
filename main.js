@@ -209,6 +209,11 @@ class ArchRecreationsPlugin extends Plugin {
     this.addCommand({ id: 'add-game', name: 'Add a Game', callback: () => this.openAddGame() });
     this.addCommand({ id: 'import-games', name: 'Import a List of Games', callback: () => this.openImportGames() });
     this.addCommand({
+      id: 'fill-covers',
+      name: 'Find Covers for Games without One',
+      callback: () => this.fillMissingCovers().catch((e) => this.fail(e)),
+    });
+    this.addCommand({
       id: 'refresh-games',
       name: 'Refresh Game Ratings from RAWG',
       callback: () => this.refreshGames().catch((e) => this.fail(e)),
@@ -1174,6 +1179,93 @@ class ArchRecreationsPlugin extends Plugin {
     return L.pickGame(title, results);
   }
 
+  // GameTDB's Switch database, downloaded once a month into the plugin's folder
+  // and unzipped with the system's unzip (macOS and Linux both have it).
+  async switchTdb() {
+    if (this._switchTdb) return this._switchTdb;
+    const L = this.lib();
+    const xmlPath = path.join(this.pluginDir(), 'switchtdb.xml');
+    let fresh = false;
+    try {
+      fresh = Date.now() - fs.statSync(xmlPath).mtimeMs < 30 * 24 * 3600 * 1000;
+    } catch (_) {
+      fresh = false;
+    }
+    if (!fresh) {
+      const res = await requestUrl({ url: L.GAMETDB_ZIP, throw: false });
+      if (res.status !== 200 || !res.arrayBuffer) throw new Error(`GameTDB answered HTTP ${res.status}`);
+      const zip = path.join(os.tmpdir(), `switchtdb-${Date.now()}.zip`);
+      fs.writeFileSync(zip, Buffer.from(res.arrayBuffer));
+      await new Promise((resolve, reject) =>
+        execFile('unzip', ['-o', '-q', zip, 'switchtdb.xml', '-d', this.pluginDir()], (err) => (err ? reject(new Error(`unzip failed: ${err.message}`)) : resolve()))
+      );
+      fs.unlinkSync(zip);
+      this.log('GameTDB Switch database downloaded');
+    }
+    this._switchTdb = L.parseSwitchTdb(fs.readFileSync(xmlPath, 'utf8'));
+    this.log(`GameTDB: ${this._switchTdb.length} Switch games`);
+    return this._switchTdb;
+  }
+
+  // A cover from GameTDB for a game on the Switch, when Steam has none.
+  async switchCover(game, stem, imageFolder) {
+    if (!game.platforms.includes('Nintendo Switch')) return null;
+    let index;
+    try {
+      index = await this.switchTdb();
+    } catch (e) {
+      this.log('no GameTDB database:', e.message);
+      return null;
+    }
+    const L = this.lib();
+    const id = L.switchCoverFor(index, game.name);
+    if (!id) {
+      this.log(`GameTDB has no Switch game named ${game.name}`);
+      return null;
+    }
+    for (const url of L.switchCoverUrls(id)) {
+      try {
+        return await this.saveImage(url, imageFolder, stem);
+      } catch (_) {
+        /* the next region */
+      }
+    }
+    return null;
+  }
+
+  // Every game note without a cover gets one from GameTDB if the game is on the
+  // Switch. Nothing else in the note changes, and a cover of his is never replaced.
+  async fillMissingCovers() {
+    const L = this.lib();
+    const notes = this.gameNotes().filter(({ file }) => !this.app.metadataCache.getFileCache(file)?.frontmatter?.cover);
+    const status = new Notice(`Looking for ${plural(notes.length, 'cover')}…`, 0);
+    const found = [];
+    const none = [];
+    for (const { file, slug } of notes) {
+      try {
+        const d = await this.rawgGame(slug);
+        if (!d) continue;
+        const game = L.gameFromRawg(d);
+        const imageFolder = this.resolveImageFolder(file.parent ? file.parent.path : this.gameFolder());
+        const f = await this.switchCover(game, L.safeFileName(`${file.basename} Cover`), imageFolder);
+        if (!f) {
+          none.push(file.basename);
+          continue;
+        }
+        await this.setFields(file, { cover: this.linkFor(f, file.path, 'Cover') }, this.settings.gameNoteOrder, L.GAME_OWN_KEYS);
+        await this.app.vault.process(file, (text) => L.putCoverFirst(text, this.linkFor(f, file.path, '')));
+        found.push(file.basename);
+      } catch (e) {
+        none.push(file.basename);
+        this.log(`cover for ${file.basename} failed:`, e.message);
+      }
+    }
+    status.hide();
+    this.log(`covers found for ${found.length}; none for: ${none.join(', ')}`);
+    new Notice(`Covers: ${found.length} found, ${none.length} without one (the console lists them).`, 10000);
+    return { found, none };
+  }
+
   gameFolder() {
     return this.cleanFolder(this.settings.gameFolder) || 'Games';
   }
@@ -1268,6 +1360,7 @@ class ArchRecreationsPlugin extends Plugin {
       let coverFile = null;
       if (!fmNow.cover) {
         coverFile = await save(game.cover, `${title} Cover`);
+        if (!coverFile) coverFile = await this.switchCover(game, L.safeFileName(`${title} Cover`), imageFolder);
         if (coverFile) links.cover = this.linkFor(coverFile, notePath, 'Cover');
       } else this.log('kept the cover the note already has:', notePath);
       if (!fmNow.banner) {
@@ -1293,10 +1386,10 @@ class ArchRecreationsPlugin extends Plugin {
       // A note he had before keeps its body, and gets at the end whichever of
       // the art it does not show yet: his older game notes were a line or two.
       if (existing instanceof TFile) {
-        const wall = [coverFile ? this.linkFor(coverFile, notePath, '') : '', ...shotLinks].filter(Boolean);
         await this.app.vault.process(file, (text) => {
+          if (coverFile) text = L.putCoverFirst(text, this.linkFor(coverFile, notePath, ''));
           const bodyText = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
-          const missing = wall.filter((l) => !bodyText.includes(l.slice(2, -2)));
+          const missing = shotLinks.filter((l) => !bodyText.includes(l.slice(2, -2)));
           return missing.length ? text.replace(/\s*$/, '\n') + missing.map((l) => `!${l}`).join('\n') + '\n' : text;
         });
       }
