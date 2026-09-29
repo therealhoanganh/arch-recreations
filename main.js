@@ -1123,10 +1123,22 @@ class ArchRecreationsPlugin extends Plugin {
 
   /* ---------------- games (0.4.0) ---------------- */
 
-  rawg(pathname, params = {}) {
+  // RAWG goes down for minutes at a time: the first import lost 26 of 203 games
+  // to "HTTP 502" in a row. A server error or a rate limit is tried again after
+  // 5, 20 and 60 seconds before it counts as a failure.
+  async rawg(pathname, params = {}) {
     if (!this.settings.rawgApiKey) throw new Error('No RAWG API key in settings. Get one free at rawg.io/apidocs, then paste it under Games.');
     const q = new URLSearchParams({ key: this.settings.rawgApiKey, ...params });
-    return this.json({ url: `${this.lib().RAWG}${pathname}?${q}` });
+    const waits = [5000, 20000, 60000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.json({ url: `${this.lib().RAWG}${pathname}?${q}` });
+      } catch (e) {
+        if (!/HTTP (5\d\d|429)/.test(e.message) || attempt >= waits.length) throw e;
+        this.log(`RAWG said ${e.message.slice(0, 40)}; trying again in ${waits[attempt] / 1000}s`);
+        await new Promise((r) => setTimeout(r, waits[attempt]));
+      }
+    }
   }
 
   async searchGames(query) {
@@ -1364,7 +1376,7 @@ class ArchRecreationsPlugin extends Plugin {
     }
     if (report.failed.length) {
       lines.push('### Failed', '');
-      for (const x of report.failed) lines.push(`- "${x.g.title}": ${x.error}`);
+      for (const x of report.failed) lines.push(`- "${x.g.title}": ${String(x.error).replace(/\s+/g, ' ').trim()}`);
       lines.push('');
     }
     const text = lines.join('\n');
@@ -1416,8 +1428,8 @@ class ArchRecreationsPlugin extends Plugin {
       if (!g) continue;
       const fields = {
         'weighted-rating': L.weightedRating(g.rating, g.votes, g.added, o),
-        rating: g.votes ? g.rating : null,
-        'ratings-count': g.votes || null,
+        rating: g.votes && g.rating ? g.rating : null,
+        'ratings-count': g.votes && g.rating ? g.votes : null,
         metacritic: g.metacritic || null,
       };
       for (const k of Object.keys(fields)) if (fields[k] === null) delete fields[k];

@@ -47,6 +47,14 @@ explains what changed at each version and why.
     the end.
   - `writeMovieNote` and `setFields` take the kind's own keys, so a game's keys are not the
     film's.
+  - **First run on his list, 2026-09-29**: 168 written, then RAWG answered HTTP 502 for 26
+    games in a row. `rawg()` now tries a server error or a rate limit again after 5, 20 and
+    60 seconds; the 26 went through on a second run. The run also showed an exact title must
+    beat a near one (it picked *CHARMING HEART* over *Charming Hearts*), and that RAWG gives
+    `rating: 0` for a game voted on but never scored, which is now no rating at all. Eleven
+    titles RAWG's search could not place were pinned by address (Skyrim VR for his "Elder
+    Scroll", *Needy Girl Overdose* for Needy Streamer Overload, and others); the list is in
+    CHAOS's `Games/@Import.md`. 204 game notes in all, 154 with a Steam cover.
 
 ## 0.3.4
 

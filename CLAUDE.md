@@ -300,6 +300,11 @@ His plan and answers are in `᭄᭡ CHAOS/CHAOS Plans.md`, item 8; the design in
   and appends "(2018)" or "(itch)" to tell copies apart. `lib/games.js::pickGame` and
   `slugGuesses` handle each of those; every rule came from his list. RAWG answers an old
   address with `{redirect: true, slug}`, which `rawgGame` follows.
+- **RAWG goes down for minutes at a time** (HTTP 502 for 26 games in a row on the first
+  import), so `rawg()` retries server errors; an import is safe to run again, since an
+  existing note is refreshed and saved images are kept.
+- **Nintendo exclusives have no Steam page, so no cover** (50 of 204); the CHAOS base's
+  main gallery uses the banner for that reason, and a *Covers* view shows the rest.
 - A game note is recognised by its `URL` holding `rawg.io/games/<slug>`, as a film's by
   its TMDB URL.
 - Note names are RAWG's name without its disambiguation, no year (the h-games have none,
