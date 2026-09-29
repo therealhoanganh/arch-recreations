@@ -2599,7 +2599,7 @@ class AddSeriesModal extends Modal {
 
 /* ---------------- games (0.4.0) ---------------- */
 
-const PLAY_ON_CHOICES = ['', 'Linux', 'Nintendo', 'RetroArch', 'PlayStation', 'Virtual'];
+const PLAY_ON_CHOICES = ['', 'Linux', 'Mac', 'Nintendo', 'RetroArch', 'PlayStation', 'Virtual'];
 
 // Search RAWG, pick, and say where he would play it. The results show the year
 // and how many people added the game, since RAWG has many same-named copies.
@@ -2694,7 +2694,7 @@ class ImportGamesModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     this.titleEl.setText('Import a List of Games');
-    contentEl.createEl('p', { text: 'One game a line: the title, then where you would play it (Linux, Nintendo, RetroArch, PlayStation, Virtual; Window and Steam Deck count as Linux), separated by a tab or " | ". A RAWG address on a line picks that game exactly. A report of picks to check goes into @Import.md in the games folder.' });
+    contentEl.createEl('p', { text: 'One game a line: the title, then where you would play it (Linux, Mac, Nintendo, RetroArch, PlayStation, Virtual; Window and Steam Deck count as Linux), separated by a tab or " | ". A RAWG address on a line picks that game exactly. A report of picks to check goes into @Import.md in the games folder.' });
     const area = contentEl.createEl('textarea', { attr: { rows: '14', spellcheck: 'false', 'aria-label': 'List of games' } });
     area.style.width = '100%';
     const row = contentEl.createDiv();

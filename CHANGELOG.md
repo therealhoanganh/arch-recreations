@@ -3,7 +3,14 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.4.0 — current
+## 0.4.1 — current
+
+- **Mac is a place to play.** His words, 2026-09-29: *"I think play on Mac could work for
+  busy-screen indies, like play on small screen but still big enough."* `play-on` accepts
+  Mac (and "macOS", "MacBook" in an imported list), and *Add a Game* offers it. The rule
+  behind the places is in CHAOS's `Games/@Where to Play.md`.
+
+## 0.4.0
 
 - **Games**, the first kind after films and series, for CHAOS only. He asked on
   2026-09-29: *"Let's work on games. Like H-games, I want to create a library first, then we

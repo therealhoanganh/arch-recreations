@@ -291,7 +291,8 @@ His plan and answers are in `᭄᭡ CHAOS/CHAOS Plans.md`, item 8; the design in
   `cdn.akamai.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (cover) and
   `library_hero.jpg` (banner). Older games have them only at 600×900 and 1920×620.
 - **No status property.** He refused one: *"not these bland "Completed" or "To Play"
-  status"*. What will take its place is his Sparks System, not designed yet. Do not add
+  status"*. What takes its place is Curiosity and Novelty in his Recreation System (the
+  Sparks System was dropped, 2026-09-29), not designed into notes yet. Do not add
   `played`, `status` or `watched` to game notes.
 - **`play-on` is his, once set**: an import writes it only on a note without one; so are
   `cover` and `banner` (Dispatch's are hand-made PNGs).
@@ -528,7 +529,7 @@ gh release create <version> dist/main.js dist/manifest.json --title <version> --
 
 Edit this section in place; what changed and why goes in `CHANGELOG.md`.
 
-**Release 0.4.0 is current** (0.4.0 adds games, see *Games (0.4.0)* above; 0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
+**Release 0.4.1 is current** (0.4.1 adds Mac to `play-on`; 0.4.0 adds games, see *Games (0.4.0)* above; 0.3.4 starts Prowlarr on demand, since the apps are no longer login items; 0.3.0 added `plot`; 0.3.1 hands the player the real path, for the snap VLC on the PC; 0.3.2 adds *Reload This Tab* on Ctrl+R / Cmd+R, which he wanted in CHAOS only; 0.3.3, from the UI review of 2026-09-27, lets the search results be picked with the keyboard and puts every label in Title Case). 0.3.3 was copied into CHAOS by hand. The plugin is installed in `᭄᭡ CHAOS`
 through BRAT, with TESTFIELD's settings, and runs in `TESTFIELD` through the
 symlink.
 
