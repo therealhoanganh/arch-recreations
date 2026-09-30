@@ -285,8 +285,15 @@ His plan and answers are in `᭄᭡ CHAOS/CHAOS Plans.md`, item 8; the design in
 `CHANGELOG.md`, 0.4.0. What a change has to respect:
 
 - **Steam's store is blocked on his network; Steam's image server is not.**
-  `store.steampowered.com` and `steamcommunity.com` resolve to 127.0.0.1 here, so no
-  Steam API. RAWG (`api.rawg.io`, his free key in settings) gives the facts and, through
+  `store.steampowered.com` and `steamcommunity.com` resolve to 127.0.0.1 here (and the
+  store does not load even at its real address), so no store pages. **Steam's API server
+  is not blocked** (found 2026-09-30; this note said otherwise until then):
+  `api.steampowered.com/IStoreBrowseService/GetItems/v1?input_json={"ids":[{"appid":<id>}],"context":{"language":"english","country_code":"US"},"data_request":{"include_assets":true}}`
+  returns every image's path. **Newer games keep their art under a hashed folder**
+  (`shared.akamai.steamstatic.com/store_item_assets/steam/apps/<id>/<hash>/library_capsule_2x.jpg`
+  is the 600×900 cover, `library_hero_2x.jpg` the banner), so the plain address below is
+  a 404 for them; not used by the plugin yet, and it may give covers to notes that have
+  none. RAWG (`api.rawg.io`, his free key in settings) gives the facts and, through
   `/games/<id>/stores`, the Steam app id, which is enough for
   `cdn.akamai.steamstatic.com/steam/apps/<id>/library_600x900_2x.jpg` (cover) and
   `library_hero.jpg` (banner). Older games have them only at 600×900 and 1920×620.

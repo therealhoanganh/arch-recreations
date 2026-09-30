@@ -285,3 +285,7 @@ First version. Films only.
 - Folder settings follow the family's five-option shape; the property order
   setting decides what is written as well as the order; hand-added properties
   are never touched; logging is always on.
+
+## 2026-09-30 — Steam's API is reachable (a correction, no code change)
+
+`CLAUDE.md` said there was no Steam API on his network. Adding covers to Heroic on the PC found that `api.steampowered.com` answers: `IStoreBrowseService/GetItems` with `include_assets` gives the hashed paths under which newer games keep their art, where the plain `steam/apps/<id>/library_600x900_2x.jpg` is a 404 (Flirting With Girls in Fantasy World, app 3867230). Written into *Games (0.4.0), and what RAWG taught*; the plugin does not use it yet.
