@@ -1326,9 +1326,12 @@ class ArchRecreationsPlugin extends Plugin {
         storeUrls: (stores.results || []).map((x) => x.url),
         screenshots: (shots.results || []).slice(0, Math.max(0, Number(this.settings.gameScreenshotsCount) || 0)),
       });
-      const title = L.safeFileName(L.bareTitle(game.name));
       const folder = this.gameFolder();
       await this.ensureFolder(folder);
+      let title = L.safeFileName(L.bareTitle(game.name));
+      const older = L.legacyFileName(L.bareTitle(game.name));
+      if (!(this.app.vault.getAbstractFileByPath(normalizePath(`${folder}/${title}.md`)) instanceof TFile)
+        && this.app.vault.getAbstractFileByPath(normalizePath(`${folder}/${older}.md`)) instanceof TFile) title = older;
       const notePath = normalizePath(`${folder}/${title}.md`);
 
       if (opts.oldName && !(this.app.vault.getAbstractFileByPath(notePath) instanceof TFile)) {
@@ -1559,11 +1562,9 @@ class ArchRecreationsPlugin extends Plugin {
       const movie = await this.movieDetails(tmdbId);
       lap(`details for ${movie.title} (${movie.year})`);
 
-      const vars = { title: L.safeFileName(movie.title), year: movie.year || '' };
       const noteFolder = this.resolveMovieFolder(quality);
       await this.ensureFolder(noteFolder);
-      const noteName = L.safeFileName(L.fillTemplate(this.settings.noteNameTemplate, vars));
-      const notePath = normalizePath(noteFolder ? `${noteFolder}/${noteName}.md` : `${noteName}.md`);
+      const { vars, notePath } = this.namesFor(noteFolder, movie.title, movie.year);
 
       const imageFolder = this.resolveImageFolder(noteFolder);
       await this.ensureFolder(imageFolder);
@@ -1625,6 +1626,21 @@ class ArchRecreationsPlugin extends Plugin {
     } finally {
       this.inFlight.delete(key);
     }
+  }
+
+  // A film's or series' names: today's rule, or the name its note got before 0.4.4 (a
+  // colon became a space then) when only that note exists, so it is refreshed, not doubled,
+  // and its poster and backdrops keep their names too.
+  namesFor(noteFolder, title, year) {
+    const L = this.lib();
+    const make = (clean, legacy) => {
+      const vars = { title: clean(title), year: year || '', legacy };
+      const noteName = clean(L.fillTemplate(this.settings.noteNameTemplate, vars));
+      return { vars, noteName, notePath: normalizePath(noteFolder ? `${noteFolder}/${noteName}.md` : `${noteName}.md`) };
+    };
+    const now = make(L.safeFileName, false), old = make(L.legacyFileName, true);
+    const has = (p) => this.app.vault.getAbstractFileByPath(p) instanceof TFile;
+    return !has(now.notePath) && has(old.notePath) ? old : now;
   }
 
   // A new note gets defaults, the plugin's fields and the backdrop wall. A note
@@ -1788,11 +1804,9 @@ class ArchRecreationsPlugin extends Plugin {
       const series = await this.seriesDetails(tmdbId);
       lap(`details for ${series.title} (${series.year}), ${series.seasons.length} season(s)`);
 
-      const vars = { title: L.safeFileName(series.title), year: series.year || '' };
       const noteFolder = this.resolveSeriesFolder(quality);
       await this.ensureFolder(noteFolder);
-      const noteName = L.safeFileName(L.fillTemplate(this.settings.noteNameTemplate, vars));
-      const notePath = normalizePath(noteFolder ? `${noteFolder}/${noteName}.md` : `${noteName}.md`);
+      const { vars, noteName, notePath } = this.namesFor(noteFolder, series.title, series.year);
       const imageFolder = this.resolveImageFolder(noteFolder);
       await this.ensureFolder(imageFolder);
 
@@ -1827,7 +1841,7 @@ class ArchRecreationsPlugin extends Plugin {
       for (const sn of series.seasons) {
         const season = await this.seasonDetails(tmdbId, sn.number);
         const svars = { ...vars, n: sn.number, year: season.year || series.year || '' };
-        const seasonName = L.safeFileName(L.fillTemplate(this.settings.seasonNoteNameTemplate, svars));
+        const seasonName = (vars.legacy ? L.legacyFileName : L.safeFileName)(L.fillTemplate(this.settings.seasonNoteNameTemplate, svars));
         const seasonPath = normalizePath(noteFolder ? `${noteFolder}/${seasonName}.md` : `${seasonName}.md`);
         const art = await this.fetchArt({ vars: svars, imageFolder, notePath: seasonPath }, season.poster, [], this.settings.seasonPosterTemplate, '');
         const chosen = sonarr && (!Array.isArray(seasonNumbers) || seasonNumbers.includes(sn.number));

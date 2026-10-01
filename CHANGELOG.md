@@ -3,7 +3,12 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
-## 0.4.3 — current
+## 0.4.4 — current
+
+- **A title's colon becomes " - " in a note's name** (`Mass Effect: Andromeda` is `Mass Effect - Andromeda`), and a colon inside a word becomes "-". It became a space before. His words, 2026-10-02, after 25 H-game notes were found with their colon turned into a space: *"Fix it, we need will need to find what games got ":" replace with blank space too, this need to be a universal rule too too!"* So the same rule is in every ARCH plugin (Adult Contents 0.5.3, YT Playlists 1.9.3, Images Plus 0.9.1, X Twitter 0.11.10, After Clipping 1.22.1). " - " is what Radarr writes (`Star Wars - Episode I - The Phantom Menace`), so a film's note and its folder now read alike.
+- **A note named the old way is still found.** `namesFor` uses the old name (`legacyFileName`) for a film or series when only that note exists, so it is refreshed, not doubled, and its poster, backdrops and season notes keep their names; a game does the same. Nothing in the vault was renamed.
+
+## 0.4.3
 
 - **The cover is a property only, not in the body.** His words, 2026-09-29: *"Also remove cover
   image in game note for me, it clutters the note prevent me to see game screenshots
