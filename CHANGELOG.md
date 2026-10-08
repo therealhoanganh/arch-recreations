@@ -3,6 +3,10 @@
 Version lives in `manifest.json` — Obsidian reads it from there. This file
 explains what changed at each version and why.
 
+## Unreleased
+
+- **`CLAUDE.md` rebuilt** (2026-10-09), in his AI rules rebuild (`~/Documents/AI Rules Rebuild Plan 2026-10-08.md`): Rules, Mistakes and Lessons, Where It Stands, one fact per line, 139 lines from 587. The old file is in `~/Documents/_/TRASH/arch-recreations/`, and word for word, with every walk-through and measurement, in `~/Documents/_/AI/arch-recreations/Details.md`. His word on the drafts: "they are straight forward and you can do this job well."
+
 ## 0.4.5 — current
 
 - **Reload This Tab moved to Thema Support** (0.3.0), so Cmd + R works in every vault running Thema, not CHAOS alone. His word, 2026-10-09: *"Yes."* His plan of Sep 29 (CHAOS Plans, item 7, step 3) had put it in ARCH Base Gallery, which is not started. The command's code moved unchanged; its id is now `thema-support:reload-tab`.
